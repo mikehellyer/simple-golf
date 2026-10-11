@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  GODOT_VERSION: 4.7.2
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version matches tag
+        run: |
+          version=$(sed -n 's/^config\/version="\(.*\)"/\1/p' project.godot)
+          if [ "v$version" != "${{ github.ref_name }}" ]; then
+            echo "project.godot version $version does not match tag ${{ github.ref_name }}"
+            exit 1
+          fi
+
+      - name: Install Godot and export templates
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          curl -sSL -o godot.zip "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q godot.zip
+          mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
+          curl -sSL -o templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          unzip -q templates.tpz
+          mv templates/* "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable/"
+
+      - name: Import and test
+        run: |
+          godot --headless --import
+          godot --headless --script res://tests/run_tests.gd
+
+      - name: Export
+        run: |
+          mkdir -p build/linux build/windows build/macos dist
+          godot --headless --export-release "Linux" build/linux/simple-golf.x86_64
+          godot --headless --export-release "Windows" build/windows/Simple-Golf.exe
+          godot --headless --export-release "macOS" build/macos/Simple-Golf.zip
+
+      - name: Package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          tar -C build/linux -czf "dist/simple-golf-${version}-linux-x86_64.tar.gz" simple-golf.x86_64
+          (cd build/windows && zip -q "../../dist/simple-golf-${version}-windows-x86_64.zip" Simple-Golf.exe)
+          cp build/macos/Simple-Golf.zip "dist/simple-golf-${version}-macos.zip"
+          ls -la dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

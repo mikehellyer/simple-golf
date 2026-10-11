@@ -1,0 +1,89 @@
+# Simple-Golf
+
+A modern re-imagining of MicroProse Golf (aka *David Leadbetter's Greens*, 1991),
+part of the Simple-* family. Built with [Godot 4](https://godotengine.org) and
+released for Linux, macOS and Windows through GitHub Releases, with an in-game
+update check.
+
+## Playing
+
+| Key | Action |
+| --- | --- |
+| ← / → | Aim (hold Shift for fine aim) |
+| ↑ / ↓ | Change club |
+| Space or left click | Swing: start, set power, set accuracy |
+| M | Overhead map |
+| Tab | Scorecard |
+| G | Green slope grid on/off (shown when putting) |
+| N | Sound on/off |
+| R | Re-aim at the pin |
+| F | Fullscreen |
+| Esc | Cancel a swing |
+| U | Open the download page when an update is available |
+
+**The swing meter** works like the original. The first click starts the
+backswing. The second click sets power; going past 100% into the red adds
+distance but magnifies any timing error. The third click, on the downswing,
+should land on the white line. Clicking early pushes and slices the ball to
+the right; clicking late pulls and hooks it to the left.
+
+The ball model includes drag, Magnus lift from backspin and sidespin, wind,
+bounce and spin-bite on landing, and slope-driven roll. Greens run at about
+stimp 10. When you are putting, the HUD reads the green's slope for you, and
+an animated grid of dots drifts downhill across the green, coloured from
+white-blue (flat) through yellow and orange to red (steep). Trees have solid
+trunks as well as canopies, so a ball can rattle around in them.
+
+Every sound (strikes, bounces, the cup rattle, splashes, applause and the
+birdsong ambience) is synthesised at startup, so there are no audio assets.
+
+Run with `-- --demo` for an attract mode in which the computer plays.
+
+## Development
+
+You need Godot 4.7.2. Download the editor from
+<https://godotengine.org/download> and open `project.godot`.
+
+Run the tests headlessly:
+
+```bash
+godot --headless --import
+godot --headless --script res://tests/run_tests.gd
+```
+
+### Layout
+
+- `scripts/core/` holds the game rules, with no rendering code. The ball
+  simulation is deterministic, so multiplayer only needs to share each shot's
+  launch.
+  - `ball_physics.gd`: flight, bounce, roll and cup capture
+  - `clubs.gd`: the bag, and turning swing-meter results into launches
+  - `scorecard.gd`: one player's card (totals, score relative to par, score names)
+  - `hole.gd`: procedural hole generation from a seed (terrain, fairway,
+    green, bunkers, water, trees)
+  - `surface.gd`: per-surface bounce, friction and roll constants
+  - `updater.gd`: GitHub release check (autoload)
+- `scripts/game/` holds the presentation: course mesh (`course_view.gd`, with
+  a high-resolution green complex), green slope grid, HUD, scorecard view,
+  swing meter, synthesised sound (`sfx.gd`), and the game loop and cameras.
+- `tests/run_tests.gd` is the headless test runner.
+
+### Releasing
+
+Bump `config/version` in `project.godot`, commit, then tag and push:
+
+```bash
+git tag v0.1.0 && git push origin main --tags
+```
+
+The release workflow exports all three platforms and attaches them to the
+GitHub release.
+
+## Roadmap
+
+1. ~~Single player: terrain, swing meter, ball physics, cameras~~
+2. ~~Full scorecard, tree trunks, nicer greens with a slope grid, sound~~
+3. Hot-seat for 1–4 players; stroke, match, skins, foursomes and fourball
+4. Network play (Godot ENet, host/join; shots are deterministic, so only
+   launches are sent)
+5. Course editor and seeded "course of the day"; .deb/.dmg/installer packaging
