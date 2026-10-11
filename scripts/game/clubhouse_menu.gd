@@ -1,7 +1,8 @@
 class_name ClubhouseMenu
 extends Control
-## The clubhouse screen: a top bar, plus either the "New round" panel or
-## "Members & stats", docked on the right so the room stays in view.
+## The clubhouse screen: a top bar, plus one panel docked on the right so the
+## room stays in view. The local club (on this computer) and the online
+## society (on a server, shared with friends) are kept clearly apart.
 
 signal view_changed(which: String)
 signal members_changed
@@ -10,11 +11,13 @@ signal quit_requested
 var setup: SetupMenu
 var members_panel: MembersPanel
 var settings_panel: SettingsPanel
+var society_panel: SocietyPanel
 var update_banner: UpdateBanner
 var _profiles: PlayerProfiles
 var _tab_play: Button
 var _tab_members: Button
 var _tab_settings: Button
+var _tab_society: Button
 
 
 static func panel_style() -> StyleBoxFlat:
@@ -52,10 +55,18 @@ func _ready() -> void:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(spacer)
+	var local := Label.new()
+	local.text = "Local club:"
+	local.modulate = Color(1, 1, 1, 0.6)
+	row.add_child(local)
 	_tab_play = _tab("New round", "play")
 	row.add_child(_tab_play)
 	_tab_members = _tab("Members & stats", "members")
 	row.add_child(_tab_members)
+	row.add_child(VSeparator.new())
+	_tab_society = _tab("Online society", "society")
+	row.add_child(_tab_society)
+	row.add_child(VSeparator.new())
 	_tab_settings = _tab("Settings", "settings")
 	row.add_child(_tab_settings)
 	var quit := Button.new()
@@ -80,6 +91,8 @@ func _ready() -> void:
 	dock.add_child(setup)
 	members_panel = MembersPanel.new()
 	dock.add_child(members_panel)
+	society_panel = SocietyPanel.new()
+	dock.add_child(society_panel)
 	settings_panel = SettingsPanel.new()
 	settings_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	dock.add_child(settings_panel)
@@ -112,6 +125,8 @@ func show_tab(which: String) -> void:
 	setup.visible = which == "play"
 	members_panel.visible = which == "members"
 	settings_panel.visible = which == "settings"
+	society_panel.visible = which == "society"
+	_tab_society.button_pressed = which == "society"
 	_tab_play.button_pressed = which == "play"
 	_tab_members.button_pressed = which == "members"
 	_tab_settings.button_pressed = which == "settings"

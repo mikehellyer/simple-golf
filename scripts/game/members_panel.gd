@@ -20,7 +20,7 @@ func _ready() -> void:
 	box.add_theme_constant_override("separation", 10)
 	add_child(box)
 	var heading := Label.new()
-	heading.text = "Members & stats"
+	heading.text = "Local club — members & stats"
 	heading.add_theme_font_size_override("font_size", 24)
 	box.add_child(heading)
 

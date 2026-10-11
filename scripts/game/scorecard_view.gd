@@ -42,6 +42,8 @@ func show_cards(cards: Array[Scorecard], current_hole: int, headline: String,
 		footer: String, extra_rows: Array[Dictionary] = []) -> void:
 	_title.text = headline
 	_footer.text = footer
+	# One column per hole in a row (up to nine), plus the name and total.
+	_grid.columns = mini(cards[0].hole_count(), 9) + 2
 	for child in _grid.get_children():
 		_grid.remove_child(child)
 		child.queue_free()
@@ -67,8 +69,8 @@ func _add_nine(cards: Array[Scorecard], first: int, total_label: String, current
 	var yards := 0
 	for i in range(first, last):
 		yards += card.yards[i]
-		_cell(str(card.yards[i]), grey, Color.TRANSPARENT)
-	_cell(str(yards), grey, Color.TRANSPARENT)
+		_cell(str(card.yards[i]) if card.yards[i] > 0 else "", grey, Color.TRANSPARENT)
+	_cell(str(yards) if yards > 0 else "", grey, Color.TRANSPARENT)
 
 	_cell("Par", Color.BLACK, Color.TRANSPARENT, false, NAME_WIDTH)
 	for i in range(first, last):

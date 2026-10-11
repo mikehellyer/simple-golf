@@ -1,0 +1,22 @@
+# systemd service for the Simple-Golf society server.
+# Installed to /etc/systemd/system/simplegolf.service by DEPLOY.md.
+[Unit]
+Description=Simple-Golf society server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=simplegolf
+WorkingDirectory=/opt/simple-golf/server
+Environment=SIMPLEGOLF_DB=/var/lib/simplegolf/simplegolf.db
+ExecStart=/opt/simple-golf/server/.venv/bin/uvicorn simplegolf_server.app:app --host 127.0.0.1 --port 8000 --proxy-headers
+Restart=on-failure
+# Keep the service locked down: it only needs its own data directory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/simplegolf
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

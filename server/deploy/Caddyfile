@@ -1,0 +1,6 @@
+# Caddy fetches and renews the HTTPS certificate automatically.
+# Replace the name below with your own DuckDNS (or other) domain.
+YOUR-NAME.duckdns.org {
+	encode gzip
+	reverse_proxy 127.0.0.1:8000
+}

@@ -28,3 +28,17 @@ jobs:
 
       - name: Network test (host and client over localhost)
         run: tests/net_test.sh godot
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Society server tests
+        run: |
+          cd server
+          python -m venv .venv
+          .venv/bin/pip install -q -r requirements-dev.txt
+          .venv/bin/python -m pytest -q tests
+
+      - name: Society test (game client against a local server)
+        run: tests/society_test.sh godot

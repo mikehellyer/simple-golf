@@ -11,6 +11,7 @@ signal join_requested(address: String, player_name: String, profile: String)
 
 const SETTINGS_PATH := "user://settings.cfg"
 const MAX_PLAYERS := 4
+const HOLE_OPTIONS := [18, 9, 3]
 const CPU_NAMES := ["Ace", "Birdie", "Chip", "Divot"]
 
 var members: PlayerProfiles
@@ -37,7 +38,7 @@ func _ready() -> void:
 	box.add_theme_constant_override("separation", 10)
 	add_child(box)
 	var heading := Label.new()
-	heading.text = "New round"
+	heading.text = "Local club — new round"
 	heading.add_theme_font_size_override("font_size", 24)
 	box.add_child(heading)
 
@@ -55,8 +56,8 @@ func _ready() -> void:
 	_count.item_selected.connect(func(_i: int) -> void: _refresh_rows())
 	box.add_child(_labelled("Players", _count))
 	_holes = OptionButton.new()
-	_holes.add_item("18 holes")
-	_holes.add_item("9 holes")
+	for n in HOLE_OPTIONS:
+		_holes.add_item("%d holes%s" % [n, " (quick test)" if n == 3 else ""])
 	box.add_child(_labelled("Length", _holes))
 	var course_row := HBoxContainer.new()
 	_course = OptionButton.new()
@@ -318,14 +319,14 @@ func _on_join() -> void:
 
 
 func _hole_count() -> int:
-	return 18 if _holes.selected == 0 else 9
+	return HOLE_OPTIONS[maxi(_holes.selected, 0)]
 
 
 func _load() -> void:
 	var cfg := ConfigFile.new()
 	cfg.load(SETTINGS_PATH)
 	_mode.select(cfg.get_value("game", "mode", 0))
-	_holes.select(cfg.get_value("game", "holes_option", 0))
+	_holes.select(clampi(cfg.get_value("game", "holes_option", 0), 0, HOLE_OPTIONS.size() - 1))
 	_address.text = cfg.get_value("online", "address", "")
 	_refresh()
 	var count: int = cfg.get_value("game", "players", 1)

@@ -37,7 +37,29 @@ simulating it, then mistimes the swing meter and misreads putts like a person.
 | Fourball | 4 | Two teams of two, own balls, best score counts, match play |
 | Foursomes | 4 | Two teams of two sharing a ball, alternate shots, match play |
 
-The setup screen remembers your last line-up. Rounds can be 18 or 9 holes.
+The setup screen remembers your last line-up. Rounds can be 18, 9 or 3 holes (3 is handy for a quick test).
+
+### Local club and online society
+
+- The **local club** lives on this computer: its members, stats and saved
+  courses never leave it.
+- The **online society** is a club on a small server, shared with friends.
+  Sign in from the clubhouse's **Online society** tab, then create a society
+  or join one with an invite code. In each society:
+  - **Tournaments:** admins set up an event with a course, a length (18, 9 or
+    3 holes), a date window (for example a week) and a rule: either one
+    round counts, or the best of any number of rounds. Members play it on
+    their own computer whenever suits them, and their card goes straight to
+    the leaderboard.
+  - **Practice:** solo rounds that count towards practice stats only.
+  - **Members & stats:** every member's record, with tournament and
+    practice stats kept apart.
+  - **Scorecards:** every card is kept and can be viewed again later.
+  If the server can't be reached when a round finishes, the card is kept
+  and sent the next time you open the society.
+
+To run a society server, see [server/DEPLOY.md](server/DEPLOY.md). It sets up
+a free Oracle Cloud machine in about half an hour.
 
 ### Courses
 
@@ -178,8 +200,14 @@ tests/net_test.sh godot
   synthesised sound (`sfx.gd`), and the game loop and cameras.
 - `scripts/net/net_session.gd` handles hosting and joining over ENet, plus the
   lobby. The in-game messages are the `net_*` functions in `golf_game.gd`.
-- `tests/run_tests.gd` is the headless test runner, and `tests/net_test.sh` is
-  the two-machine network test.
+- `scripts/net/society_client.gd` talks to the society server, and
+  `scripts/game/society_panel.gd` is the Online society tab.
+- `server/` is the society server: a small Python (FastAPI + SQLite) web
+  service with its own tests (`server/tests`) and deployment files
+  (`server/deploy`, `server/DEPLOY.md`).
+- `tests/run_tests.gd` is the headless test runner, `tests/net_test.sh` is
+  the two-machine network test, and `tests/society_test.sh` runs the game's
+  society client against a throwaway local server.
 
 ### Releasing
 

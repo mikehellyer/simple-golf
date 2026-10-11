@@ -55,8 +55,8 @@ func _ready() -> void:
 	_mode.item_selected.connect(func(_i: int) -> void: _push_settings())
 	box.add_child(_row("Game", _mode))
 	_holes = OptionButton.new()
-	_holes.add_item("18 holes")
-	_holes.add_item("9 holes")
+	for n in SetupMenu.HOLE_OPTIONS:
+		_holes.add_item("%d holes" % n)
 	_holes.item_selected.connect(func(_i: int) -> void: _push_settings())
 	box.add_child(_row("Length", _holes))
 	_course = OptionButton.new()
@@ -174,7 +174,7 @@ func _refresh() -> void:
 	_course_row.visible = host
 	_course_name.visible = not host
 	_course_name.text = "Course: %s" % _net.settings.get("course", {}).get("name", "Random course")
-	_holes.select(0 if _net.settings.holes == 18 else 1)
+	_holes.select(maxi(SetupMenu.HOLE_OPTIONS.find(int(_net.settings.holes)), 0))
 
 	for child in _players.get_children():
 		child.queue_free()
@@ -206,7 +206,7 @@ func _push_settings() -> void:
 		return
 	var s := _net.settings.duplicate(true)
 	s.mode = _mode.selected
-	s.holes = 18 if _holes.selected == 0 else 9
+	s.holes = SetupMenu.HOLE_OPTIONS[maxi(_holes.selected, 0)]
 	var current: Dictionary = s.get("course", {})
 	if current.get("name", "") != _course.get_item_text(_course.selected):
 		s.course = _selected_course().to_dict()

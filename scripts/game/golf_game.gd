@@ -66,6 +66,11 @@ var _holes: Array[Hole] = []
 var members := PlayerProfiles.new()
 ## Per ball on the current hole: {putts, fairway (-1/0/1), gir, drive}.
 var _hole_stats: Array[Dictionary] = []
+## Online society: the server connection, the round being played for a
+## society (empty for local rounds) and its hole-by-hole log for the card.
+var _society: SocietyClient
+var _society_round := {}
+var _round_log: Array[Dictionary] = []
 var _balls: Array[Ball] = []
 var _ball: Ball
 var _hitter: Competition.Player
@@ -155,7 +160,14 @@ func _ready() -> void:
 	_menu.setup.host_requested.connect(_on_host_requested)
 	_menu.setup.join_requested.connect(_on_join_requested)
 	_menu.quit_requested.connect(func() -> void: get_tree().quit())
-	_menu.view_changed.connect(func(which: String) -> void: _clubhouse_view = which)
+	_society = SocietyClient.new()
+	add_child(_society)
+	_menu.society_panel.attach(_society)
+	_menu.view_changed.connect(func(which: String) -> void:
+		_clubhouse_view = which
+		if which == "society":
+			_menu.society_panel.open(_society))
+	_menu.society_panel.play_requested.connect(_start_society_round)
 	_menu.members_changed.connect(_update_clubhouse_decor)
 	_menu.settings_panel.open(_graphics)
 	_menu.settings_panel.changed.connect(func(g: GraphicsSettings) -> void: g.apply(get_viewport(), _sun))
@@ -218,6 +230,9 @@ func _show_menu(status := "") -> void:
 	_menu.open(members, status)
 	if _arg("tab", "") != "":
 		_menu.show_tab(_arg("tab", ""))
+	elif not _society_round.is_empty():
+		_menu.show_tab("society")
+	_society_round = {}
 	# Start inside, looking out of the window.
 	var v := _clubhouse.view("play")
 	_camera.position = v[0]
@@ -275,7 +290,17 @@ func _start_demo() -> void:
 	_start_round(Competition.Mode.FOURBALL, players, 18, Course.new("Random course", _rng.randi()))
 
 
+## A practice or tournament round for an online society: one player, stroke
+## play; the card is uploaded when the round is finished.
+func _start_society_round(context: Dictionary) -> void:
+	var me := Competition.Player.new(context.display_name, Competition.Kind.HUMAN, Competition.COLOURS[0])
+	var players: Array[Competition.Player] = [me]
+	_start_round(Competition.Mode.STROKE, players, context.holes, context.course)
+	_society_round = context
+
+
 func _on_menu_start(mode: int, players: Array, holes: int, c: Course) -> void:
+	_society_round = {}
 	var typed: Array[Competition.Player] = []
 	typed.assign(players)
 	_start_round(mode as Competition.Mode, typed, holes, c)
@@ -376,6 +401,7 @@ func net_start_round(mode: int, player_dicts: Array, course_dict: Dictionary, ho
 	_menu.visible = false
 	_lobby.visible = false
 	_hud.visible = true
+	_round_log.clear()
 	_start_hole(1)
 
 
@@ -728,6 +754,11 @@ func _hole_complete() -> void:
 		strokes.append(b.strokes)
 		best = mini(best, b.strokes)
 	var headline := comp.record_hole(strokes)
+	# Keep each ball's hole for the society scorecard.
+	for b in _balls.size():
+		var st := _hole_stats[b]
+		_round_log.append({ball = b, par = hole.par, strokes = strokes[b], putts = st.putts,
+				fairway = st.fairway, gir = st.gir, drive = st.drive})
 	var any := false
 	for i in comp.players.size():
 		var p := comp.players[i]
@@ -776,9 +807,37 @@ func _round_complete() -> void:
 	_sfx.play("applause")
 	_show_card(comp.result_text(), 0)
 	_set_state(State.ROUND_DONE)
+	if not _society_round.is_empty():
+		_submit_society_card()
 	if "--quit-at-end" in _args:
 		await get_tree().create_timer(1.0).timeout
 		get_tree().quit()
+
+
+## Uploads the finished society round and says how it went.
+func _submit_society_card() -> void:
+	var ctx := _society_round
+	var card := {society_id = ctx.society_id, tournament_id = null if ctx.tournament_id < 0 else ctx.tournament_id,
+			course_name = ctx.course.name, course_code = ctx.course_code,
+			pars = [], strokes = [], putts = [], fairways = [], greens = [], drives = []}
+	for h in _round_log:
+		if h.ball != 0:
+			continue
+		card.pars.append(h.par)
+		card.strokes.append(h.strokes)
+		card.putts.append(mini(h.putts, h.strokes))
+		card.fairways.append(h.fairway)
+		card.greens.append(h.gir)
+		card.drives.append(snappedf(h.drive, 0.1))
+	var what: String = ctx.tournament_name if ctx.tournament_id >= 0 else "practice round"
+	_hud.show_message("Sending your card to %s…" % ctx.society_name)
+	var r := await _menu.society_panel.submit(card)
+	if r.ok:
+		_hud.show_message("Card saved to %s (%s)" % [ctx.society_name, what])
+	elif r.status == 0:
+		_hud.show_message("Couldn't reach the society server.\nYour card is saved and will be sent next time you open the society.")
+	else:
+		_hud.show_message("The society didn't accept this card:\n%s" % r.error)
 
 
 func _show_card(headline: String, current_hole: int) -> void:
