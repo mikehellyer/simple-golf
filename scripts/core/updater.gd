@@ -28,6 +28,11 @@ func _ready() -> void:
 	var forced := "--update-check" in args or "--update-dry-run" in args
 	if (OS.has_feature("editor") or DisplayServer.get_name() == "headless") and not forced:
 		return
+	# The player can turn the check off (Settings → Check for updates).
+	var cfg := ConfigFile.new()
+	cfg.load("user://settings.cfg")
+	if not cfg.get_value("general", "check_updates", true) and not forced:
+		return
 	var http := HTTPRequest.new()
 	add_child(http)
 	http.request_completed.connect(_on_check_completed.bind(http))

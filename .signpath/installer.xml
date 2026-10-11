@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SignPath artifact configuration "installer": signs the Inno Setup
+     installer. The workflow uploads it under this fixed name. Paste this into
+     the SignPath project; this copy is kept here for reference. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="Simple-Golf-Setup.exe" product-name="Simple-Golf" product-version="0.*">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

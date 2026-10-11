@@ -11,6 +11,7 @@ var _aa: OptionButton
 var _renderer: OptionButton
 var _restart: Button
 var _note: Label
+var _updates: CheckBox
 
 
 func _ready() -> void:
@@ -39,6 +40,12 @@ func _ready() -> void:
 	_restart.pressed.connect(func() -> void: settings.restart(get_tree()))
 	box.add_child(_restart)
 
+	box.add_child(HSeparator.new())
+	_updates = CheckBox.new()
+	_updates.text = "Check for updates when the game starts"
+	_updates.toggled.connect(func(_on: bool) -> void: _on_changed())
+	box.add_child(_updates)
+
 	var help := Label.new()
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	help.modulate = Color(1, 1, 1, 0.55)
@@ -55,6 +62,7 @@ func open(s: GraphicsSettings) -> void:
 	_shadows.select(s.shadows)
 	_aa.select(s.anti_aliasing)
 	_renderer.select(s.renderer)
+	_updates.set_pressed_no_signal(s.check_updates)
 	_update_note()
 
 
@@ -62,6 +70,7 @@ func _on_changed() -> void:
 	settings.shadows = _shadows.selected
 	settings.anti_aliasing = _aa.selected
 	settings.renderer = _renderer.selected
+	settings.check_updates = _updates.button_pressed
 	settings.save()
 	_update_note()
 	changed.emit(settings)

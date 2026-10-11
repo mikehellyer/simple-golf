@@ -111,6 +111,14 @@ audio assets.
 
 Run with `-- --demo` to watch four computer golfers play a fourball.
 
+## Licence, privacy and code signing
+
+Simple-Golf is free software under the [MIT licence](LICENSE). It collects no
+personal data. The only automatic network request is a check with GitHub for
+a newer version when the game starts, which you can turn off in **Settings**.
+Windows builds are code-signed; see [CODE_SIGNING.md](CODE_SIGNING.md) for the
+signing policy and the full privacy statement.
+
 ## Installing
 
 Download the latest version from the

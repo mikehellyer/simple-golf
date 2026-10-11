@@ -14,6 +14,8 @@ const RENDER_METHODS := ["forward_plus", "mobile", "gl_compatibility"]
 var shadows := 2
 var anti_aliasing := 2
 var renderer := 0
+## Not graphics, but saved alongside: ask GitHub for new versions at start.
+var check_updates := true
 
 
 static func load_saved() -> GraphicsSettings:
@@ -23,6 +25,7 @@ static func load_saved() -> GraphicsSettings:
 	g.shadows = clampi(cfg.get_value("graphics", "shadows", 2), 0, SHADOWS.size() - 1)
 	g.anti_aliasing = clampi(cfg.get_value("graphics", "anti_aliasing", 2), 0, ANTI_ALIASING.size() - 1)
 	g.renderer = clampi(cfg.get_value("graphics", "renderer", 0), 0, RENDERERS.size() - 1)
+	g.check_updates = cfg.get_value("general", "check_updates", true)
 	return g
 
 
@@ -33,6 +36,7 @@ func save() -> void:
 	cfg.set_value("graphics", "shadows", shadows)
 	cfg.set_value("graphics", "anti_aliasing", anti_aliasing)
 	cfg.set_value("graphics", "renderer", renderer)
+	cfg.set_value("general", "check_updates", check_updates)
 	cfg.save(SETTINGS_PATH)
 
 

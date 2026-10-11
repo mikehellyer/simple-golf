@@ -91,6 +91,39 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install innosetup -y --no-progress
 
+      # Code signing (SignPath Foundation; see CODE_SIGNING.md). It switches on
+      # once the repository variable SIGNPATH_ORGANIZATION_ID and the secret
+      # SIGNPATH_API_TOKEN exist; until then builds are simply unsigned. The
+      # game exe is signed first, so the copy inside the installer is signed,
+      # then the installer itself. Each request waits for manual approval.
+      - name: Upload the game exe for signing
+        id: unsigned-exe
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v5
+        with:
+          name: unsigned-exe
+          path: build/windows/Simple-Golf.exe
+          if-no-files-found: error
+
+      - name: Sign the game exe
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'simple-golf' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: exe
+          github-artifact-id: ${{ steps.unsigned-exe.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: build/windows-signed
+
+      - name: Use the signed game exe
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: pwsh
+        run: Copy-Item build\windows-signed\Simple-Golf.exe build\windows\Simple-Golf.exe -Force
+
       - name: Package (Windows installer and portable zip)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -99,6 +132,45 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" "packaging\windows\installer.iss"
           Compress-Archive -Path build\windows\Simple-Golf.exe, build\windows\Simple-Golf.pck -DestinationPath "dist\Simple-Golf-$version-Windows-portable.zip"
+          # Stage the installer under a fixed name for its signing configuration.
+          New-Item -ItemType Directory -Force signing | Out-Null
+          Copy-Item "dist\Simple-Golf-$version-Windows-Setup.exe" signing\Simple-Golf-Setup.exe
+
+      - name: Upload the installer for signing
+        id: unsigned-installer
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v5
+        with:
+          name: unsigned-installer
+          path: signing/Simple-Golf-Setup.exe
+          if-no-files-found: error
+
+      - name: Sign the installer
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'simple-golf' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signing/signed
+
+      - name: Use the signed installer and check both signatures
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path project.godot -Pattern '^config/version="(.*)"').Matches[0].Groups[1].Value
+          $setup = "dist\Simple-Golf-$version-Windows-Setup.exe"
+          Copy-Item signing\signed\Simple-Golf-Setup.exe $setup -Force
+          foreach ($file in @($setup, "build\windows\Simple-Golf.exe")) {
+            $sig = Get-AuthenticodeSignature $file
+            Write-Host "$file : $($sig.Status) — $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') { throw "$file is not validly signed" }
+          }
 
       - uses: actions/upload-artifact@v5
         with:

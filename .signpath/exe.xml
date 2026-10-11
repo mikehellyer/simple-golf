@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SignPath artifact configuration "exe": signs the game executable before
+     the installer is built, so the installed copy is signed too. Paste this
+     into the SignPath project; this copy is kept here for reference. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="Simple-Golf.exe" product-name="Simple-Golf" product-version="0.*">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
