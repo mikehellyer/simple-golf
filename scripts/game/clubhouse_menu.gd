@@ -9,9 +9,11 @@ signal quit_requested
 
 var setup: SetupMenu
 var members_panel: MembersPanel
+var settings_panel: SettingsPanel
 var _profiles: PlayerProfiles
 var _tab_play: Button
 var _tab_members: Button
+var _tab_settings: Button
 
 
 static func panel_style() -> StyleBoxFlat:
@@ -53,6 +55,8 @@ func _ready() -> void:
 	row.add_child(_tab_play)
 	_tab_members = _tab("Members & stats", "members")
 	row.add_child(_tab_members)
+	_tab_settings = _tab("Settings", "settings")
+	row.add_child(_tab_settings)
 	var quit := Button.new()
 	quit.text = "Quit"
 	quit.pressed.connect(func() -> void: quit_requested.emit())
@@ -70,6 +74,9 @@ func _ready() -> void:
 	dock.add_child(setup)
 	members_panel = MembersPanel.new()
 	dock.add_child(members_panel)
+	settings_panel = SettingsPanel.new()
+	settings_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	dock.add_child(settings_panel)
 	members_panel.members_changed.connect(func() -> void:
 		setup.refresh_players()
 		members_changed.emit())
@@ -95,8 +102,10 @@ func open(profiles: PlayerProfiles, status := "") -> void:
 func show_tab(which: String) -> void:
 	setup.visible = which == "play"
 	members_panel.visible = which == "members"
+	settings_panel.visible = which == "settings"
 	_tab_play.button_pressed = which == "play"
 	_tab_members.button_pressed = which == "members"
+	_tab_settings.button_pressed = which == "settings"
 	if which == "members":
 		members_panel.refresh()
 	view_changed.emit(which)

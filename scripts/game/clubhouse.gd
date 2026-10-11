@@ -14,6 +14,8 @@ const WINDOW_SILL := 0.8
 const WINDOW_TOP := 3.1
 ## Distance from the window wall back to the tee.
 const SET_BACK := 26.0
+## Heights of the trophy cabinet's base and shelf tops.
+const SHELVES := [0.3, 0.95, 1.6]
 
 var _fire_light: OmniLight3D
 var _board_names: Array[Label3D] = []
@@ -53,12 +55,13 @@ func build(hole: Hole) -> void:
 
 	# Shell: foundation, floor, ceiling and beams.
 	var plinth := floor_y - lowest + 2.0
-	_box(Vector3(W + 0.6, plinth, D + 0.6), Vector3(0, -plinth / 2.0, -D / 2.0), stone)
+	# Keep the foundation's top below the floor so the two never z-fight.
+	_box(Vector3(W + 0.6, plinth, D + 0.6), Vector3(0, -plinth / 2.0 - 0.12, -D / 2.0), stone)
 	_box(Vector3(W, 0.1, D), Vector3(0, -0.05, -D / 2.0), wood)
 	_box(Vector3(W, 0.2, D), Vector3(0, H + 0.1, -D / 2.0), plaster)
 	for i in 4:
 		_box(Vector3(W, 0.25, 0.3), Vector3(0, H - 0.12, -1.5 - i * 2.4), dark_wood)
-	_box(Vector3(6.0, 0.02, 4.0), Vector3(0, 0.01, -4.5), green_cloth)
+	_box(Vector3(6.0, 0.02, 4.0), Vector3(0, 0.015, -4.5), green_cloth)
 
 	# Walls with wood panelling below a dado rail.
 	_wall(Vector3(W, H, 0.3), Vector3(0, H / 2.0, -D - 0.15), plaster, wood, Vector3(0, 0, 1))
@@ -87,21 +90,28 @@ func build(hole: Hole) -> void:
 		_box(Vector3(0.25, 0.25 + k * 0.08, 0.25), Vector3(fx + 0.15, 0.2, -5.35 + k * 0.35), fire)
 	_fire_light = OmniLight3D.new()
 	_fire_light.light_color = Color(1.0, 0.6, 0.3)
-	_fire_light.omni_range = 7.0
+	_fire_light.omni_range = 4.5
 	_fire_light.position = Vector3(fx + 1.0, 0.7, -5.0)
 	add_child(_fire_light)
 	# A painting of a golf hole above the mantel.
 	_box(Vector3(0.06, 1.0, 1.6), Vector3(-W / 2.0 + 0.04, 2.95, -5.0), gold)
-	_box(Vector3(0.07, 0.85, 1.45), Vector3(-W / 2.0 + 0.05, 2.95, -5.0), _mat(Color(0.35, 0.6, 0.3), 1.0))
-	_box(Vector3(0.075, 0.3, 1.45), Vector3(-W / 2.0 + 0.055, 3.25, -5.0), _mat(Color(0.55, 0.7, 0.9), 1.0))
+	_box(Vector3(0.04, 0.85, 1.45), Vector3(-W / 2.0 + 0.07, 2.95, -5.0), _mat(Color(0.35, 0.6, 0.3), 1.0))
+	_box(Vector3(0.04, 0.3, 1.45), Vector3(-W / 2.0 + 0.1, 3.25, -5.0), _mat(Color(0.55, 0.7, 0.9), 1.0))
 
 	# Trophy cabinet on the right wall.
+	# Built hollow (back, top, base, sides, shelves) so the cups show.
 	var cx := W / 2.0 - 0.35
-	_box(Vector3(0.6, 2.4, 2.8), Vector3(cx, 1.2, -5.0), dark_wood)
-	_box(Vector3(0.5, 2.1, 2.5), Vector3(cx - 0.06, 1.25, -5.0), _mat(Color(0.12, 0.08, 0.05), 1.0))
-	for i in 3:
-		_box(Vector3(0.5, 0.05, 2.5), Vector3(cx - 0.06, 0.45 + i * 0.65, -5.0), wood)
-	_cups.position = Vector3(cx - 0.1, 0.0, -5.0)
+	_box(Vector3(0.05, 2.4, 2.8), Vector3(cx + 0.27, 1.2, -5.0), _mat(Color(0.12, 0.08, 0.05), 1.0))
+	_box(Vector3(0.6, 0.1, 2.8), Vector3(cx, 2.35, -5.0), dark_wood)
+	_box(Vector3(0.6, 0.3, 2.8), Vector3(cx, 0.15, -5.0), dark_wood)
+	for side in [-1.0, 1.0]:
+		_box(Vector3(0.6, 2.4, 0.08), Vector3(cx, 1.2, -5.0 + side * 1.36), dark_wood)
+	for y in SHELVES.slice(1):
+		_box(Vector3(0.54, 0.04, 2.64), Vector3(cx + 0.02, y - 0.02, -5.0), wood)
+	var glass := _mat(Color(0.8, 0.9, 1.0, 0.12), 0.05)
+	glass.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_box(Vector3(0.02, 2.0, 2.64), Vector3(cx - 0.29, 1.3, -5.0), glass)
+	_cups.position = Vector3(cx, 0.0, -5.0)
 	add_child(_cups)
 	var cabinet_light := OmniLight3D.new()
 	cabinet_light.light_color = Color(1.0, 0.9, 0.7)
@@ -180,9 +190,9 @@ func set_trophies(count: int) -> void:
 	# The club championship trophy is always there.
 	count = clampi(count + 1, 1, 18)
 	for i in count:
-		var shelf := i / 6
+		var shelf := mini(i / 6, SHELVES.size() - 1)
 		var slot := i % 6
-		var at := Vector3(0, 0.48 + shelf * 0.65, -1.05 + slot * 0.42)
+		var at := Vector3(0, SHELVES[shelf] - 0.02, -1.05 + slot * 0.42)
 		var cup := CylinderMesh.new()
 		cup.top_radius = 0.09
 		cup.bottom_radius = 0.035
@@ -213,7 +223,8 @@ func view(which: String) -> Array[Vector3]:
 func _process(delta: float) -> void:
 	_time += delta
 	if _fire_light:
-		_fire_light.light_energy = 1.4 + 0.35 * sin(_time * 7.0) * sin(_time * 3.3 + 1.0)
+		# A soft, slow glow rather than a flicker that makes the room pulse.
+		_fire_light.light_energy = 1.0 + 0.06 * sin(_time * 1.7) + 0.04 * sin(_time * 2.9 + 1.0)
 
 
 func _wall(size: Vector3, centre: Vector3, upper: Material, lower: Material, inward: Vector3) -> void:

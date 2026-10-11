@@ -338,6 +338,7 @@ func _load() -> void:
 
 func _save() -> void:
 	var cfg := ConfigFile.new()
+	cfg.load(SETTINGS_PATH)  # keep other sections, e.g. graphics
 	cfg.set_value("game", "mode", _mode.selected)
 	cfg.set_value("game", "players", _player_count())
 	cfg.set_value("game", "holes_option", _holes.selected)

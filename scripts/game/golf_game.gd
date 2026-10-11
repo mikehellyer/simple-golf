@@ -80,6 +80,8 @@ var _clubhouse: Clubhouse
 ## Which part of the clubhouse the camera looks at: "play" or "members".
 var _clubhouse_view := "play"
 var _env: Environment
+var _sun: DirectionalLight3D
+var _graphics := GraphicsSettings.load_saved()
 var _lobby: LobbyMenu
 var _editor: CourseEditor
 var _sfx: Sfx
@@ -119,8 +121,17 @@ var _net_log := "--net-log" in _args
 
 
 func _ready() -> void:
+	# The renderer can only be picked at launch: restart once if the saved
+	# choice differs (unless it was given on the command line).
+	if _graphics.needs_restart() and DisplayServer.get_name() != "headless" \
+			and not "--rendering-method" in OS.get_cmdline_args():
+		set_process(false)
+		set_process_unhandled_input(false)
+		_graphics.restart(get_tree())
+		return
 	_rng.randomize()
 	_build_world()
+	_graphics.apply(get_viewport(), _sun)
 	_net = NetSession.new()
 	_net.name = "Net"
 	add_child(_net)
@@ -146,6 +157,8 @@ func _ready() -> void:
 	_menu.quit_requested.connect(func() -> void: get_tree().quit())
 	_menu.view_changed.connect(func(which: String) -> void: _clubhouse_view = which)
 	_menu.members_changed.connect(_update_clubhouse_decor)
+	_menu.settings_panel.open(_graphics)
+	_menu.settings_panel.changed.connect(func(g: GraphicsSettings) -> void: g.apply(get_viewport(), _sun))
 	_lobby = LobbyMenu.new()
 	_lobby.visible = false
 	_lobby.start_requested.connect(_on_lobby_start)
@@ -1337,6 +1350,7 @@ func _build_world() -> void:
 	add_child(world_env)
 
 	var sun := DirectionalLight3D.new()
+	_sun = sun
 	sun.rotation_degrees = Vector3(-50.0, 35.0, 0.0)
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 300.0
