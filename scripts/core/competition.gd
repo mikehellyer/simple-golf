@@ -29,6 +29,8 @@ class Player:
 	var colour: Color
 	## Network peer that controls this player (1 = host, or offline).
 	var owner := 1
+	## Club member id whose stats this player's golf counts towards ("" = none).
+	var profile := ""
 
 	func _init(player_name: String, player_kind: Kind, player_colour: Color) -> void:
 		name = player_name
@@ -42,11 +44,12 @@ class Player:
 		return maxi(kind - 1, 0) as CpuPlayer.Skill
 
 	func to_dict() -> Dictionary:
-		return {name = name, kind = kind, colour = colour, owner = owner}
+		return {name = name, kind = kind, colour = colour, owner = owner, profile = profile}
 
 	static func from_dict(d: Dictionary) -> Player:
 		var p := Player.new(d.name, d.kind, d.colour)
 		p.owner = d.owner
+		p.profile = str(d.get("profile", ""))
 		return p
 
 
@@ -101,6 +104,38 @@ func side_name(side: int) -> String:
 	if is_team_mode(mode):
 		return "%s & %s" % [players[side * 2].name, players[side * 2 + 1].name]
 	return players[side].name
+
+
+## The ball a player plays (their own, or their team's in foursomes).
+func ball_of_player(player_index: int) -> int:
+	return player_index / 2 if mode == Mode.FOURSOMES else player_index
+
+
+## "win", "loss" or "halved" for a player once the round is over ("" for a
+## solo stroke-play round).
+func result_for(player_index: int) -> String:
+	var ball := ball_of_player(player_index)
+	var side := side_of_ball(ball)
+	if is_match():
+		if match_diff == 0:
+			return "halved"
+		return "win" if (match_diff > 0) == (side == 0) else "loss"
+	if mode == Mode.SKINS:
+		var best := 0
+		for s in skins:
+			best = maxi(best, s)
+		var top := 0
+		for s in skins:
+			top += 1 if s == best else 0
+		if skins[side] < best:
+			return "loss"
+		return "win" if top == 1 else "halved"
+	if ball_count() == 1:
+		return ""
+	var lead := leaders()
+	if not ball in lead:
+		return "loss"
+	return "win" if lead.size() == 1 else "halved"
 
 
 func ball_name(ball: int) -> String:

@@ -1,17 +1,19 @@
 class_name SetupMenu
-extends Control
-## The first screen: pick a format and who is playing. The last line-up is
-## remembered between sessions.
+extends PanelContainer
+## "New round" in the clubhouse: the format, the course and who is playing.
+## Each player slot is a club member or a computer golfer. The last line-up
+## is remembered between sessions.
 
 signal start_requested(mode: int, players: Array, holes: int, course: Course)
 signal editor_requested(course: Course)
-signal host_requested(player_name: String)
-signal join_requested(address: String, player_name: String)
-signal quit_requested
+signal host_requested(player_name: String, profile: String)
+signal join_requested(address: String, player_name: String, profile: String)
 
 const SETTINGS_PATH := "user://settings.cfg"
 const MAX_PLAYERS := 4
+const CPU_NAMES := ["Ace", "Birdie", "Chip", "Divot"]
 
+var members: PlayerProfiles
 var _mode: OptionButton
 var _count: OptionButton
 var _holes: OptionButton
@@ -22,38 +24,22 @@ var _status: Label
 var _info: Label
 var _rows: Array[HBoxContainer] = []
 var _tags: Array[Label] = []
-var _names: Array[LineEdit] = []
-var _kinds: Array[OptionButton] = []
+var _who: Array[OptionButton] = []
+## Saved choice per slot: a member id, or "cpu:<kind>".
+var _choices: Array[String] = []
 var _start: Button
 
 
 func _ready() -> void:
-	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var centre := CenterContainer.new()
-	centre.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(centre)
-	var panel := PanelContainer.new()
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.05, 0.12, 0.06, 0.82)
-	sb.set_corner_radius_all(14)
-	sb.set_content_margin_all(28)
-	panel.add_theme_stylebox_override("panel", sb)
-	centre.add_child(panel)
+	add_theme_stylebox_override("panel", ClubhouseMenu.panel_style())
 	var box := VBoxContainer.new()
-	box.custom_minimum_size = Vector2(520, 0)
-	box.add_theme_constant_override("separation", 12)
-	panel.add_child(box)
-
-	var title := Label.new()
-	title.text = "Simple-Golf"
-	title.add_theme_font_size_override("font_size", 46)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(title)
-	var sub := Label.new()
-	sub.text = "v%s  ·  a modern MicroProse Golf" % Updater.current_version()
-	sub.modulate = Color(1, 1, 1, 0.6)
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(sub)
+	box.custom_minimum_size = Vector2(500, 0)
+	box.add_theme_constant_override("separation", 10)
+	add_child(box)
+	var heading := Label.new()
+	heading.text = "New round"
+	heading.add_theme_font_size_override("font_size", 24)
+	box.add_child(heading)
 
 	_mode = OptionButton.new()
 	for m in Competition.MODE_NAMES:
@@ -95,37 +81,26 @@ func _ready() -> void:
 		tag.custom_minimum_size = Vector2(70, 0)
 		tag.add_theme_color_override("font_color", Competition.COLOURS[i])
 		row.add_child(tag)
-		var name_edit := LineEdit.new()
-		name_edit.max_length = 12
-		name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		name_edit.text_submitted.connect(func(_t: String) -> void: _on_start())
-		row.add_child(name_edit)
-		var kind := OptionButton.new()
-		for k in Competition.KIND_NAMES:
-			kind.add_item(k)
-		kind.custom_minimum_size = Vector2(150, 0)
-		row.add_child(kind)
+		var who := OptionButton.new()
+		who.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(who)
 		box.add_child(row)
 		_rows.append(row)
 		_tags.append(tag)
-		_names.append(name_edit)
-		_kinds.append(kind)
+		_who.append(who)
+		_choices.append("")
 
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 10)
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	_start = Button.new()
 	_start.text = "  Tee off  "
-	_start.pressed.connect(_on_start)
+	_start.pressed.connect(func() -> void: _begin(false))
 	buttons.add_child(_start)
 	var watch := Button.new()
 	watch.text = "Watch the computer"
-	watch.pressed.connect(_on_watch)
+	watch.pressed.connect(func() -> void: _begin(true))
 	buttons.add_child(watch)
-	var quit := Button.new()
-	quit.text = "Quit"
-	quit.pressed.connect(func() -> void: quit_requested.emit())
-	buttons.add_child(quit)
 	box.add_child(buttons)
 
 	box.add_child(HSeparator.new())
@@ -136,10 +111,8 @@ func _ready() -> void:
 	online_label.custom_minimum_size = Vector2(70, 0)
 	online.add_child(online_label)
 	var host := Button.new()
-	host.text = "Host a game"
-	host.pressed.connect(func() -> void:
-		_save()
-		host_requested.emit(_first_name()))
+	host.text = "Host"
+	host.pressed.connect(_on_host)
 	online.add_child(host)
 	_address = LineEdit.new()
 	_address.placeholder_text = "host address"
@@ -158,13 +131,49 @@ func _ready() -> void:
 	box.add_child(_status)
 
 	_load()
+
+
+func open(profiles: PlayerProfiles, status := "") -> void:
+	members = profiles
+	_status.text = status
+	refresh_courses()
+	refresh_players()
+	_start.grab_focus()
+
+
+## Rebuilds each slot's list: club members, then computer golfers.
+func refresh_players() -> void:
+	for i in MAX_PLAYERS:
+		var o := _who[i]
+		o.clear()
+		for m in members.members:
+			o.add_item(m.name)
+			o.set_item_metadata(o.item_count - 1, m.id)
+		if o.item_count > 0:
+			o.add_separator()
+		for k in range(1, Competition.KIND_NAMES.size()):
+			o.add_item("Computer — %s" % CpuPlayer.SKILL_NAMES[k - 1].to_lower())
+			o.set_item_metadata(o.item_count - 1, "cpu:%d" % k)
+		var want := _choices[i]
+		if want == "":
+			# Default: the first members, then computer golfers.
+			want = members.members[i].id if i < members.members.size() else "cpu:%d" % Competition.Kind.CPU_MEDIUM
+		_select_meta(o, want)
+		if not o.item_selected.is_connected(_remember):
+			o.item_selected.connect(_remember.bind(i))
 	_refresh()
 
 
-func open(status := "") -> void:
-	visible = true
-	_status.text = status
-	refresh_courses()
+func _remember(_index: int, slot: int) -> void:
+	_choices[slot] = str(_who[slot].get_selected_metadata())
+
+
+func _select_meta(o: OptionButton, meta: String) -> void:
+	for j in o.item_count:
+		if str(o.get_item_metadata(j)) == meta:
+			o.select(j)
+			return
+	o.select(o.item_count - 2)
 
 
 ## Fills the course list: a new random course, today's course, then saved ones.
@@ -205,7 +214,6 @@ func selected_course() -> Course:
 		1:
 			return Course.daily()
 	return Course.load_saved(_course.get_item_text(_course.selected))
-	_start.grab_focus()
 
 
 func _labelled(text: String, control: Control) -> HBoxContainer:
@@ -246,48 +254,67 @@ func _player_count() -> int:
 	return _count.get_item_text(_count.selected).to_int()
 
 
+## The line-up, or an empty list (with a message) if it isn't valid.
 func _players(all_cpu: bool) -> Array[Competition.Player]:
 	var out: Array[Competition.Player] = []
+	var used := {}
 	for i in _player_count():
-		var player_name := _names[i].text.strip_edges()
-		if player_name == "":
-			player_name = "Player %d" % (i + 1)
-		var kind := _kinds[i].selected as Competition.Kind
+		var meta := str(_who[i].get_selected_metadata())
 		if all_cpu:
-			kind = Competition.Kind.CPU_HARD if i % 2 == 0 else Competition.Kind.CPU_MEDIUM
-		out.append(Competition.Player.new(player_name, kind, Competition.COLOURS[i]))
+			meta = "cpu:%d" % (Competition.Kind.CPU_HARD if i % 2 == 0 else Competition.Kind.CPU_MEDIUM)
+		if meta.begins_with("cpu:"):
+			out.append(Competition.Player.new(CPU_NAMES[i], meta.get_slice(":", 1).to_int() as Competition.Kind,
+					Competition.COLOURS[i]))
+			continue
+		var m := members.find(meta)
+		if m.is_empty():
+			_status.text = "Choose who is playing in each slot."
+			return []
+		if used.has(meta):
+			_status.text = "%s can only play once in a round." % m.name
+			return []
+		used[meta] = true
+		var p := Competition.Player.new(m.name, Competition.Kind.HUMAN, Competition.COLOURS[i])
+		p.profile = m.id
+		out.append(p)
 	return out
-
-
-func _on_start() -> void:
-	_begin(false)
-
-
-func _on_watch() -> void:
-	_begin(true)
 
 
 func _begin(all_cpu: bool) -> void:
 	var c := selected_course()
-	if c == null:
+	var players := _players(all_cpu)
+	if c == null or players.is_empty():
 		return
 	_save()
-	visible = false
-	start_requested.emit(_mode.selected, _players(all_cpu), _hole_count(), c)
+	start_requested.emit(_mode.selected, players, _hole_count(), c)
+
+
+## Online play uses Player 1's slot, which must be a club member.
+func _online_member() -> Dictionary:
+	var m := members.find(str(_who[0].get_selected_metadata()))
+	if m.is_empty():
+		_status.text = "To play online, choose yourself (a club member) as Player 1."
+	return m
+
+
+func _on_host() -> void:
+	var m := _online_member()
+	if m.is_empty():
+		return
+	_save()
+	host_requested.emit(m.name, m.id)
 
 
 func _on_join() -> void:
 	if _address.text.strip_edges() == "":
 		_status.text = "Enter the host's address, e.g. 192.168.1.20"
 		return
+	var m := _online_member()
+	if m.is_empty():
+		return
 	_save()
 	_status.text = "Connecting…"
-	join_requested.emit(_address.text, _first_name())
-
-
-func _first_name() -> String:
-	var n := _names[0].text.strip_edges()
-	return n if n != "" else "Player 1"
+	join_requested.emit(_address.text, m.name, m.id)
 
 
 func _hole_count() -> int:
@@ -304,10 +331,9 @@ func _load() -> void:
 	var count: int = cfg.get_value("game", "players", 1)
 	var counts: Array = Competition.PLAYER_COUNTS[_mode.selected]
 	_count.select(maxi(counts.find(count), 0))
+	_refresh_rows()
 	for i in MAX_PLAYERS:
-		_names[i].text = cfg.get_value("players", "name%d" % i, "Player %d" % (i + 1))
-		var default_kind := Competition.Kind.HUMAN if i == 0 else Competition.Kind.CPU_MEDIUM
-		_kinds[i].select(cfg.get_value("players", "kind%d" % i, default_kind))
+		_choices[i] = cfg.get_value("players", "slot%d" % i, "")
 
 
 func _save() -> void:
@@ -317,6 +343,5 @@ func _save() -> void:
 	cfg.set_value("game", "holes_option", _holes.selected)
 	cfg.set_value("online", "address", _address.text)
 	for i in MAX_PLAYERS:
-		cfg.set_value("players", "name%d" % i, _names[i].text)
-		cfg.set_value("players", "kind%d" % i, _kinds[i].selected)
+		cfg.set_value("players", "slot%d" % i, str(_who[i].get_selected_metadata()))
 	cfg.save(SETTINGS_PATH)

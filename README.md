@@ -7,6 +7,22 @@ update check.
 
 ## Playing
 
+The game opens in the **clubhouse**, a lounge behind the first tee with a
+window looking down the hole. From there you can:
+
+- **Members & stats:** join the club (just your name), and look up any
+  member's record: rounds and holes played, scoring average, best 18- and
+  9-hole rounds, fairways hit, greens in regulation, putts per hole, average
+  and longest drive, birdies and eagles, match wins, losses and halves,
+  skins won, and their recent rounds. The members' board on the wall ranks
+  everyone by scoring average, and the trophy cabinet gains a cup for every
+  round a member wins.
+- **New round:** pick the format and course, and fill each player slot with
+  a club member or a computer golfer.
+
+Stats are kept on each computer (in online games each player's own computer
+records their round), and they're saved after every hole.
+
 Up to four players share one computer, taking turns as on a real course.
 Everyone tees off in honour order (best score on the previous hole first),
 then the ball farthest from the hole plays next. Any player can be a human
@@ -90,7 +106,8 @@ white-blue (flat) through yellow and orange to red (steep). Trees have solid
 trunks as well as canopies, so a ball can rattle around in them.
 
 Every sound (strikes, bounces, the cup rattle, splashes, applause and the
-birdsong ambience) is synthesised at startup, so there are no audio assets.
+occasional bird out on the course) is synthesised at startup, so there are no
+audio assets.
 
 Run with `-- --demo` to watch four computer golfers play a fourball.
 
@@ -141,14 +158,16 @@ tests/net_test.sh godot
   - `competition.gd`: formats, teams, honours, match standing and skins
   - `aim.gd`: club choice, lay-up targets and default aim, shared by humans and the computer
   - `cpu_player.gd`: the computer golfer (plans by simulation, errs by skill level)
+  - `player_profiles.gd`: club members and their career stats (`user://members.json`)
   - `hole.gd`: procedural hole generation from a seed (terrain, fairway,
     green, bunkers, water, trees)
   - `surface.gd`: per-surface bounce, friction and roll constants
   - `updater.gd`: GitHub release check (autoload)
 - `scripts/game/` holds the presentation: course mesh (`course_view.gd`, with
   a high-resolution green complex), green slope grid, HUD, scorecard view,
-  setup menu, swing meter, synthesised sound (`sfx.gd`), and the game loop
-  and cameras.
+  the clubhouse (`clubhouse.gd` builds the room; `clubhouse_menu.gd`,
+  `setup_menu.gd` and `members_panel.gd` are its screens), swing meter,
+  synthesised sound (`sfx.gd`), and the game loop and cameras.
 - `scripts/net/net_session.gd` handles hosting and joining over ENet, plus the
   lobby. The in-game messages are the `net_*` functions in `golf_game.gd`.
 - `tests/run_tests.gd` is the headless test runner, and `tests/net_test.sh` is

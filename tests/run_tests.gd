@@ -30,6 +30,7 @@ func _init() -> void:
 	test_cpu_golfer()
 	test_hole_overrides()
 	test_course_codes()
+	test_profiles()
 	print("\n%d passed, %d failed" % [_passes, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -380,3 +381,34 @@ func test_course_codes() -> void:
 	var other := Course.new("Layout", 99)
 	other.set_hole_overrides(1, {layout = 3})
 	check(other.make_hole(1).pin != Course.new("Layout", 99).make_hole(1).pin, "new layout changes the hole")
+
+
+func test_profiles() -> void:
+	var file := "user://test_members.json"
+	DirAccess.remove_absolute(file)
+	var club := PlayerProfiles.new(file)
+	var mike := club.add("Mike")
+	check(not mike.is_empty() and club.add("mike").is_empty(), "member names are unique")
+	club.add("Ana")
+	check(club.rename(mike.id, "Michael") and not club.rename(mike.id, "Ana"), "rename, but not onto another member")
+	club.record_hole(mike.id, 4, 3, 1, 1, true, 240.0)
+	club.record_hole(mike.id, 3, 1, 0, -1, true, 0.0)
+	club.record_hole(mike.id, 5, 7, 3, 0, false, 210.0)
+	club.record_round(mike.id, {date = "2026-10-11", course = "Test", code = "SG-1", mode = 0,
+			holes = 9, strokes = 40, par = 36, result = "win", skins = 0, text = "40 (+4)"})
+	check(club.save() == OK, "members save")
+	var again := PlayerProfiles.new(file)
+	var m := again.find(mike.id)
+	var st: Dictionary = m.stats
+	check(m.name == "Michael" and again.members.size() == 2, "members reload")
+	check(int(st.holes) == 3 and int(st.birdies) == 1 and int(st.hole_in_ones) == 1
+			and int(st.doubles) == 1, "hole scores are counted (%s)" % st)
+	check(int(st.fairways) == 1 and int(st.fairway_chances) == 2 and int(st.greens) == 2
+			and int(st.putts) == 4, "fairways, greens and putts")
+	check(is_equal_approx(st.longest_drive, 240.0) and int(st.drives) == 2, "drives")
+	check(int(st.rounds) == 1 and int(st.wins) == 1 and int(st.best9.strokes) == 40
+			and m.history.size() == 1, "round history, wins and best 9")
+	check(is_equal_approx(PlayerProfiles.scoring_average(st), -6.0), "scoring average per 18 (11 on par 12 over 3 holes)")
+	again.remove(mike.id)
+	check(again.find(mike.id).is_empty(), "members can leave")
+	DirAccess.remove_absolute(file)

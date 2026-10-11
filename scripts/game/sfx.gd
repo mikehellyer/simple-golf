@@ -8,7 +8,12 @@ const VOICES := 10
 var _streams := {}
 var _players: Array[AudioStreamPlayer] = []
 var _next := 0
-var _ambient: AudioStreamPlayer
+var _birds: AudioStreamPlayer
+var _birds_on := false
+var _next_bird := 0.0
+## Seconds between occasional birdsong, and how quietly it plays.
+const BIRD_GAP := Vector2(25.0, 60.0)
+const BIRD_VOLUME := -20.0
 var _rng := RandomNumberGenerator.new()
 
 
@@ -34,13 +39,11 @@ func _ready() -> void:
 		var p := AudioStreamPlayer.new()
 		add_child(p)
 		_players.append(p)
-	_ambient = AudioStreamPlayer.new()
-	var amb := _wav(_ambience(8.0))
-	amb.loop_mode = AudioStreamWAV.LOOP_FORWARD
-	amb.loop_end = amb.data.size() / 2
-	_ambient.stream = amb
-	_ambient.volume_db = -14.0
-	add_child(_ambient)
+	for i in 3:
+		_streams["bird%d" % i] = _wav(_chirp(i))
+	_birds = AudioStreamPlayer.new()
+	_birds.volume_db = BIRD_VOLUME
+	add_child(_birds)
 
 
 func play(sound: String, volume_db := 0.0, pitch := 1.0) -> void:
@@ -54,11 +57,21 @@ func play(sound: String, volume_db := 0.0, pitch := 1.0) -> void:
 	p.play()
 
 
-## Background birdsong and breeze; louder when it's windy.
-func set_ambience(wind_speed: float) -> void:
-	_ambient.volume_db = lerpf(-18.0, -6.0, clampf(wind_speed / 9.0, 0.0, 1.0))
-	if not _ambient.playing:
-		_ambient.play()
+## Outdoors, a bird sings now and then; indoors (the clubhouse) it's quiet.
+func set_birds(on: bool) -> void:
+	_birds_on = on
+	_next_bird = _rng.randf_range(BIRD_GAP.x * 0.3, BIRD_GAP.y * 0.5)
+
+
+func _process(delta: float) -> void:
+	if not _birds_on:
+		return
+	_next_bird -= delta
+	if _next_bird <= 0.0:
+		_next_bird = _rng.randf_range(BIRD_GAP.x, BIRD_GAP.y)
+		_birds.stream = _streams["bird%d" % _rng.randi_range(0, 2)]
+		_birds.pitch_scale = _rng.randf_range(0.9, 1.1)
+		_birds.play()
 
 
 func toggle_mute() -> bool:
@@ -223,32 +236,21 @@ func _applause(seconds: float, claps_per_second: float) -> PackedFloat32Array:
 	return b
 
 
-## Breeze plus occasional birdsong, cross-faded at the ends to loop cleanly.
-func _ambience(seconds: float) -> PackedFloat32Array:
-	var b := _buffer(seconds)
-	var y := 0.0
-	for i in b.size():
-		var t := float(i) / RATE
-		var gust := 0.6 + 0.4 * sin(TAU * t / seconds * 2.0) * sin(TAU * t / seconds * 3.0)
-		y += _lp_coeff(350.0) * (_rng.randf_range(-1.0, 1.0) - y)
-		b[i] = y * gust * 0.8
-	for c in 7:
-		var start := _rng.randf_range(0.2, seconds - 0.6)
-		var base := _rng.randf_range(2800.0, 4200.0)
-		var notes := _rng.randi_range(2, 5)
-		for nn in notes:
-			var t0 := start + nn * 0.11
-			var phase := 0.0
-			for i in int(0.08 * RATE):
-				var idx := int(t0 * RATE) + i
-				if idx >= b.size():
-					break
-				var u := float(i) / (0.08 * RATE)
-				phase += TAU * base * (1.0 + 0.25 * sin(u * PI)) / RATE
-				b[idx] += sin(phase) * sin(u * PI) * 0.12
-	var fade := int(0.5 * RATE)
-	for i in fade:
-		var a := float(i) / fade
-		b[i] = b[i] * a + b[b.size() - fade + i] * (1.0 - a)
-	b.resize(b.size() - fade)
+## A short birdsong phrase: a few quick whistled notes.
+func _chirp(variant: int) -> PackedFloat32Array:
+	var b := _buffer(0.7)
+	var base: float = [3300.0, 2800.0, 3900.0][variant]
+	var notes: int = [3, 4, 2][variant]
+	for n in notes:
+		var t0 := n * 0.13
+		var phase := 0.0
+		var length := int(0.09 * RATE)
+		for i in length:
+			var idx := int(t0 * RATE) + i
+			if idx >= b.size():
+				break
+			var u := float(i) / length
+			# Each note sweeps up then down a little, like a whistle.
+			phase += TAU * base * (1.0 + 0.2 * sin(u * PI) - 0.05 * n) / RATE
+			b[idx] += sin(phase) * sin(u * PI) * 0.35
 	return b

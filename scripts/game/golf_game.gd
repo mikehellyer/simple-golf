@@ -14,8 +14,8 @@ extends Node3D
 ## U opens the download page when an update exists.
 ##
 ## Command-line options (after `--`): --demo watches a computer fourball;
-## --editor opens the course editor;
-## --host / --join=ADDR / --name=NAME / --autoplay / --auto-start=N /
+## --editor opens the course editor; --tab=members opens that clubhouse tab;
+## --host / --join=ADDR / --name=NAME / --profile=ID / --autoplay / --auto-start=N /
 ## --mode=N / --holes=N / --cpus=K,K / --quit-at-end / --net-log are used by
 ## the automated network test.
 
@@ -62,6 +62,10 @@ var state_time := 0.0
 
 var _hole_total := 18
 var _holes: Array[Hole] = []
+## The club's members and their stats (saved on this computer).
+var members := PlayerProfiles.new()
+## Per ball on the current hole: {putts, fairway (-1/0/1), gir, drive}.
+var _hole_stats: Array[Dictionary] = []
 var _balls: Array[Ball] = []
 var _ball: Ball
 var _hitter: Competition.Player
@@ -71,7 +75,11 @@ var _rng := RandomNumberGenerator.new()
 var _net: NetSession
 var _view: CourseView
 var _hud: Hud
-var _menu: SetupMenu
+var _menu: ClubhouseMenu
+var _clubhouse: Clubhouse
+## Which part of the clubhouse the camera looks at: "play" or "members".
+var _clubhouse_view := "play"
+var _env: Environment
 var _lobby: LobbyMenu
 var _editor: CourseEditor
 var _sfx: Sfx
@@ -129,13 +137,15 @@ func _ready() -> void:
 	var menu_layer := CanvasLayer.new()
 	menu_layer.layer = 2
 	add_child(menu_layer)
-	_menu = SetupMenu.new()
+	_menu = ClubhouseMenu.new()
 	_menu.visible = false
-	_menu.start_requested.connect(_on_menu_start)
-	_menu.host_requested.connect(_on_host_requested)
-	_menu.join_requested.connect(_on_join_requested)
-	_menu.quit_requested.connect(func() -> void: get_tree().quit())
 	menu_layer.add_child(_menu)
+	_menu.setup.start_requested.connect(_on_menu_start)
+	_menu.setup.host_requested.connect(_on_host_requested)
+	_menu.setup.join_requested.connect(_on_join_requested)
+	_menu.quit_requested.connect(func() -> void: get_tree().quit())
+	_menu.view_changed.connect(func(which: String) -> void: _clubhouse_view = which)
+	_menu.members_changed.connect(_update_clubhouse_decor)
 	_lobby = LobbyMenu.new()
 	_lobby.visible = false
 	_lobby.start_requested.connect(_on_lobby_start)
@@ -151,8 +161,8 @@ func _ready() -> void:
 	_editor.closed.connect(func() -> void: _show_menu())
 	_editor.play_requested.connect(func(c: Course) -> void:
 		_show_menu()
-		_menu.use_course(c))
-	_menu.editor_requested.connect(_show_editor)
+		_menu.setup.use_course(c))
+	_menu.setup.editor_requested.connect(_show_editor)
 	menu_layer.add_child(_editor)
 	Updater.update_available.connect(_on_update_available)
 
@@ -163,7 +173,7 @@ func _ready() -> void:
 		_show_editor(Course.new("My course", 42))
 	elif "--host" in _args:
 		_show_menu()
-		_on_host_requested(_arg("name", "Host"))
+		_on_host_requested(_arg("name", "Host"), _arg("profile", ""))
 	elif _arg("join", "") != "":
 		_show_menu()
 		_on_join_requested(_arg("join", ""), _arg("name", "Guest"))
@@ -190,8 +200,15 @@ func _show_menu(status := "") -> void:
 	_editor.visible = false
 	_camera.make_current()
 	_clear_balls()
-	_show_hole(Hole.new(_rng.randi_range(1, 18), _rng.randi()))
-	_menu.open(status)
+	_sfx.set_birds(false)
+	_show_hole(Hole.new(1, _rng.randi()), true)
+	_menu.open(members, status)
+	if _arg("tab", "") != "":
+		_menu.show_tab(_arg("tab", ""))
+	# Start inside, looking out of the window.
+	var v := _clubhouse.view("play")
+	_camera.position = v[0]
+	_look_now = v[1]
 
 
 func _show_lobby() -> void:
@@ -202,6 +219,29 @@ func _show_lobby() -> void:
 	if hole == null:
 		_show_hole(Hole.new(_rng.randi_range(1, 18), _rng.randi()))
 	_lobby.open(_net)
+	_maybe_auto_start()
+
+
+## The members' board and trophy cabinet reflect the club's records.
+func _update_clubhouse_decor() -> void:
+	if _clubhouse == null:
+		return
+	var rows := []
+	var wins := 0
+	var ranked := members.members.duplicate()
+	ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var ha: bool = int(a.stats.holes) > 0
+		var hb: bool = int(b.stats.holes) > 0
+		if ha != hb:
+			return ha
+		return PlayerProfiles.scoring_average(a.stats) < PlayerProfiles.scoring_average(b.stats))
+	for m in ranked:
+		wins += int(m.stats.wins)
+		var avg := PlayerProfiles.scoring_average(m.stats)
+		var text := "new" if int(m.stats.holes) == 0 else ("E" if absf(avg) < 0.05 else "%+.1f" % avg)
+		rows.append([m.name, text])
+	_clubhouse.set_members(rows)
+	_clubhouse.set_trophies(wins)
 
 
 func _show_editor(c: Course) -> void:
@@ -228,11 +268,12 @@ func _on_menu_start(mode: int, players: Array, holes: int, c: Course) -> void:
 	_start_round(mode as Competition.Mode, typed, holes, c)
 
 
-func _on_host_requested(player_name: String) -> void:
+func _on_host_requested(player_name: String, profile := "") -> void:
 	var err := _net.host(NetSession.DEFAULT_PORT, player_name)
 	if err != OK:
-		_menu.open("Could not host on port %d (%s)." % [NetSession.DEFAULT_PORT, error_string(err)])
+		_menu.open(members, "Could not host on port %d (%s)." % [NetSession.DEFAULT_PORT, error_string(err)])
 		return
+	_net.my_profile = profile
 	var s := _net.settings.duplicate(true)
 	s.mode = _arg("mode", "0").to_int()
 	s.course = Course.new("Random course", _rng.randi()).to_dict()
@@ -244,10 +285,12 @@ func _on_host_requested(player_name: String) -> void:
 	_show_lobby()
 
 
-func _on_join_requested(address: String, player_name: String) -> void:
+func _on_join_requested(address: String, player_name: String, profile := "") -> void:
 	var err := _net.join(address, player_name)
 	if err != OK:
-		_menu.open("Could not connect to %s (%s)." % [address, error_string(err)])
+		_menu.open(members, "Could not connect to %s (%s)." % [address, error_string(err)])
+		return
+	_net.my_profile = profile
 
 
 func _on_join_finished(ok: bool, reason: String) -> void:
@@ -301,7 +344,11 @@ func _is_local(p: Competition.Player) -> bool:
 func net_start_round(mode: int, player_dicts: Array, course_dict: Dictionary, holes: int) -> void:
 	var players: Array[Competition.Player] = []
 	for d in player_dicts:
-		players.append(Competition.Player.from_dict(d))
+		var p := Competition.Player.from_dict(d)
+		# The host doesn't know a joining player's member id; they do.
+		if _online() and p.owner == multiplayer.get_unique_id() and p.profile == "":
+			p.profile = _net.my_profile
+		players.append(p)
 	course = Course.from_dict(course_dict)
 	_hole_total = clampi(holes, 1, Course.MAX_HOLES)
 	_holes.clear()
@@ -530,14 +577,25 @@ func _resolve(r: BallPhysics.Result, b: Ball, shot_club: int) -> Dictionary:
 
 # --- Hole and turn flow (everyone) -----------------------------------------
 
-func _show_hole(h: Hole) -> void:
+## Shows a hole; with clubhouse = true, the clubhouse stands behind the tee.
+func _show_hole(h: Hole, clubhouse := false) -> void:
 	if _view:
 		_view.queue_free()
+	if _clubhouse:
+		_clubhouse.queue_free()
+		_clubhouse = null
 	hole = h
 	_view = CourseView.new()
-	_view.build(hole)
+	_view.build(hole, Clubhouse.clear_area() if clubhouse else Rect2())
 	add_child(_view)
 	_setup_map_camera()
+	# Indoors, the lamps and fire light the room rather than the blue sky.
+	_env.ambient_light_sky_contribution = 0.25 if clubhouse else 1.0
+	if clubhouse:
+		_clubhouse = Clubhouse.new()
+		_clubhouse.build(hole)
+		add_child(_clubhouse)
+		_update_clubhouse_decor()
 
 
 func _start_hole(number: int) -> void:
@@ -546,12 +604,14 @@ func _start_hole(number: int) -> void:
 	rng.seed = course.hole_seed(number) + 99
 	var wind_angle := rng.randf() * TAU
 	wind = Vector3(sin(wind_angle), 0.0, cos(wind_angle)) * rng.randf_range(0.0, MAX_WIND)
-	_sfx.set_ambience(wind.length())
+	_sfx.set_birds(true)
 	_hud.scorecard.visible = false
 
 	_clear_balls()
+	_hole_stats.clear()
 	for b in comp.ball_count():
 		_balls.append(_make_ball(b))
+		_hole_stats.append({putts = 0, fairway = -1, gir = false, drive = 0.0})
 	_tee_queue.assign(Array(comp.tee_order()))
 	_ball = _balls[_tee_queue[0]]
 	_hitter = comp.hitter(_ball.index, 0, hole.number)
@@ -613,6 +673,7 @@ func _finish_shot() -> void:
 		print("SHOT hole=%d ball=%d strokes=%d outcome=%d pos=%.3f,%.3f,%.3f local=%.3f,%.3f,%.3f" % [
 				hole.number, _ball.index, r.strokes, r.outcome, r.pos.x, r.pos.y, r.pos.z,
 				_shot.rest.x, _shot.rest.y, _shot.rest.z])
+	_track_stats(r)
 	_ball.pos = r.pos
 	_ball.lie = r.lie
 	_ball.strokes = r.strokes
@@ -628,6 +689,25 @@ func _finish_shot() -> void:
 	_set_state(State.RESULT)
 
 
+## Notes putts, fairways, greens in regulation and drives as shots finish.
+func _track_stats(r: Dictionary) -> void:
+	var st := _hole_stats[_ball.index]
+	var holed: bool = r.outcome == BallPhysics.Outcome.HOLED
+	if _ball.lie == Surface.GREEN:
+		st.putts += 1
+	if _ball.swings == 1 and hole.par >= 4:
+		st.fairway = 1 if r.lie == Surface.FAIRWAY or holed else 0
+		if club <= 2 and r.outcome == BallPhysics.Outcome.REST:
+			st.drive = Aim.flat_distance(_shot_start, r.pos)
+	if not st.gir and (r.lie == Surface.GREEN or holed) and int(r.strokes) <= hole.par - 2:
+		st.gir = true
+
+
+## Stats count for human club members playing at this machine.
+func _records_stats(p: Competition.Player) -> bool:
+	return not p.is_cpu() and p.profile != "" and _is_local(p)
+
+
 func _hole_complete() -> void:
 	var strokes := PackedInt32Array()
 	var best := 999
@@ -635,6 +715,16 @@ func _hole_complete() -> void:
 		strokes.append(b.strokes)
 		best = mini(best, b.strokes)
 	var headline := comp.record_hole(strokes)
+	var any := false
+	for i in comp.players.size():
+		var p := comp.players[i]
+		if _records_stats(p):
+			var b := comp.ball_of_player(i)
+			var st := _hole_stats[b]
+			members.record_hole(p.profile, hole.par, strokes[b], st.putts, st.fairway, st.gir, st.drive)
+			any = true
+	if any:
+		members.save()
 	if _net_log:
 		print("HOLE %d %s" % [hole.number, strokes])
 	if best < hole.par or best == 1:
@@ -652,6 +742,24 @@ func _hole_complete() -> void:
 func _round_complete() -> void:
 	if _net_log:
 		print("ROUND %s" % comp.result_text())
+	var any := false
+	for i in comp.players.size():
+		var p := comp.players[i]
+		if not _records_stats(p):
+			continue
+		var card := comp.cards[comp.ball_of_player(i)]
+		var played := card.holes_played()
+		var entry := {
+			date = Time.get_date_string_from_system(), course = course.name, code = course.to_code(),
+			mode = comp.mode, holes = played, strokes = card.total(), par = card.par_total(0, played),
+			result = comp.result_for(i), skins = comp.skins[comp.side_of_ball(comp.ball_of_player(i))]
+					if comp.mode == Competition.Mode.SKINS else 0,
+			text = comp.result_text(),
+		}
+		members.record_round(p.profile, entry)
+		any = true
+	if any:
+		members.save()
 	_sfx.play("applause")
 	_show_card(comp.result_text(), 0)
 	_set_state(State.ROUND_DONE)
@@ -858,11 +966,17 @@ func _process(delta: float) -> void:
 	state_time += delta
 	match state:
 		State.MENU, State.LOBBY:
-			var a := state_time * 0.05
-			var z := hole.length * 0.6
-			var centre := Vector3(hole.centre_x(z), hole.height_at(hole.centre_x(z), z), z)
-			_cam_target = centre + Vector3(sin(a) * 160.0, 55.0, cos(a) * 160.0)
-			_cam_look = centre
+			if _clubhouse:
+				# A gentle drift, as if glancing round the room.
+				var v := _clubhouse.view(_clubhouse_view if state == State.MENU else "play")
+				_cam_target = v[0] + Vector3(sin(state_time * 0.2) * 0.3, 0.0, 0.0)
+				_cam_look = v[1] + Vector3(sin(state_time * 0.13) * 0.5, sin(state_time * 0.17) * 0.15, 0.0)
+			else:
+				var a := state_time * 0.05
+				var z := hole.length * 0.6
+				var centre := Vector3(hole.centre_x(z), hole.height_at(hole.centre_x(z), z), z)
+				_cam_target = centre + Vector3(sin(a) * 160.0, 55.0, cos(a) * 160.0)
+				_cam_look = centre
 		State.FLYBY:
 			_flyby_camera()
 			if _is_authority() and (state_time > FLYBY_TIME or (_no_humans_here() and state_time > FLYBY_TIME * 0.5)):
@@ -1217,6 +1331,7 @@ func _build_world() -> void:
 	env.fog_density = 0.0004
 	env.fog_light_color = Color(0.74, 0.82, 0.9)
 	env.fog_sky_affect = 0.0
+	_env = env
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
 	add_child(world_env)

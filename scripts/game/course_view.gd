@@ -28,10 +28,13 @@ var green_grid: GreenGrid
 var _area: Rect2
 ## Coarse grid cells covered by the green complex.
 var _patch_cells: Rect2i
+var _keep_clear := Rect2()
 
 
-func build(h: Hole) -> void:
+## keep_clear: an area (XZ) where no trees are drawn, e.g. for the clubhouse.
+func build(h: Hole, keep_clear := Rect2()) -> void:
 	hole = h
+	_keep_clear = keep_clear
 	_area = hole.bounds.grow(SCENERY)
 	_patch_cells = _green_patch_cells()
 	_build_terrain()
@@ -244,15 +247,19 @@ func _build_trees() -> void:
 
 	var broadleaf: Array[Vector4] = []
 	var conifers: Array[Vector4] = []
+	var trees: Array[Vector4] = []
 	for t in hole.trees:
+		if not _keep_clear.has_point(Vector2(t.x, t.z)):
+			trees.append(t)
+	for t in trees:
 		if _hash(t) < 0.3:
 			conifers.append(t)
 		else:
 			broadleaf.append(t)
 
-	var trunks := _multimesh(trunk_mesh, hole.trees.size(), false)
-	for i in hole.trees.size():
-		var t := hole.trees[i]
+	var trunks := _multimesh(trunk_mesh, trees.size(), false)
+	for i in trees.size():
+		var t := trees[i]
 		var r := t.w * BallPhysics.TRUNK_RADIUS
 		trunks.set_instance_transform(i, Transform3D(
 				Basis.from_scale(Vector3(r, t.w * 2.0, r)), Vector3(t.x, t.y + t.w, t.z)))

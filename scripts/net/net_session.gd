@@ -19,6 +19,8 @@ var members := {}
 ## Format chosen by the host: {mode, cpus: [kind...], holes}.
 var settings := {mode = Competition.Mode.STROKE, cpus = [], holes = 18}
 var is_host := false
+## This machine's club member id, attached to its player in the line-up.
+var my_profile := ""
 var _peer: ENetMultiplayerPeer
 
 
@@ -92,6 +94,8 @@ func line_up() -> Array[Competition.Player]:
 		var p := Competition.Player.new(members[id], Competition.Kind.HUMAN,
 				Competition.COLOURS[out.size() % Competition.COLOURS.size()])
 		p.owner = id
+		if id == 1:
+			p.profile = my_profile
 		out.append(p)
 	var cpu_names := ["Ace", "Birdie", "Chip"]
 	for i in settings.cpus.size():
