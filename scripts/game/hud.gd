@@ -22,8 +22,11 @@ class WindArrow:
 
 var meter: SwingMeter
 var scorecard: ScorecardView
+var _player_label: Label
 var _hole_label: Label
 var _shot_label: Label
+var _standings_panel: PanelContainer
+var _standings: Label
 var _wind_label: Label
 var _wind: WindArrow
 var _message: Label
@@ -38,8 +41,10 @@ func _ready() -> void:
 	add_child(panel)
 	var box := VBoxContainer.new()
 	panel.add_child(box)
-	_hole_label = _label(22)
+	_player_label = _label(24)
+	_hole_label = _label(20)
 	_shot_label = _label(16)
+	box.add_child(_player_label)
 	box.add_child(_hole_label)
 	box.add_child(_shot_label)
 
@@ -58,6 +63,16 @@ func _ready() -> void:
 	_wind_label.offset_bottom = 108
 	_wind_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	add_child(_wind_label)
+
+	_standings_panel = PanelContainer.new()
+	_standings_panel.add_theme_stylebox_override("panel", _panel_style())
+	_standings_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_standings_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_standings_panel.offset_right = -16
+	_standings_panel.offset_top = 116
+	_standings = _label(15)
+	_standings_panel.add_child(_standings)
+	add_child(_standings_panel)
 
 	_message = _label(30)
 	_message.set_anchors_preset(Control.PRESET_CENTER)
@@ -97,6 +112,18 @@ func _ready() -> void:
 	_update_label.offset_bottom = -16
 	_update_label.modulate = Color(1.0, 0.9, 0.4)
 	add_child(_update_label)
+
+
+## The player about to swing; hidden for a single player.
+func set_player(text: String, colour: Color) -> void:
+	_player_label.visible = text != ""
+	_player_label.text = text
+	_player_label.label_settings.font_color = colour
+
+
+func set_standings(lines: PackedStringArray) -> void:
+	_standings_panel.visible = not lines.is_empty()
+	_standings.text = "\n".join(lines)
 
 
 func set_hole_info(text: String) -> void:

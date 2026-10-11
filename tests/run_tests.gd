@@ -23,6 +23,11 @@ func _init() -> void:
 	test_shot_events()
 	test_tree_trunks()
 	test_scorecard()
+	test_stroke_play()
+	test_match_play()
+	test_skins()
+	test_team_formats()
+	test_cpu_golfer()
 	print("\n%d passed, %d failed" % [_passes, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -227,3 +232,105 @@ func test_scorecard() -> void:
 	check(card.total(0, 9) == 22 and card.total(9, 18) == 0, "out and in totals")
 	check(card.par_total(0, 9) == 36 and card.par_total() == 72, "par 36 out, 72 total")
 	check(Scorecard.score_name(2, 4) == "Eagle!" and Scorecard.score_name(1, 3) == "Hole in one!", "score names")
+
+
+func _players(n: int) -> Array[Competition.Player]:
+	var out: Array[Competition.Player] = []
+	for i in n:
+		out.append(Competition.Player.new("P%d" % (i + 1), Competition.Kind.HUMAN, Color.WHITE))
+	return out
+
+
+func _comp(mode: Competition.Mode, n: int, holes := 18) -> Competition:
+	var pars := PackedInt32Array()
+	var yards := PackedInt32Array()
+	for i in holes:
+		pars.append(4)
+		yards.append(400)
+	return Competition.new(mode, _players(n), pars, yards)
+
+
+func test_stroke_play() -> void:
+	var c := _comp(Competition.Mode.STROKE, 3)
+	check(c.tee_order() == PackedInt32Array([0, 1, 2]), "first tee goes in player order")
+	c.record_hole(PackedInt32Array([5, 3, 4]))
+	check(c.tee_order() == PackedInt32Array([1, 2, 0]), "lowest score has the honour")
+	c.record_hole(PackedInt32Array([4, 4, 4]))
+	check(c.tee_order() == PackedInt32Array([1, 2, 0]), "ties keep the previous order")
+	check(c.leaders() == [1], "P2 leads at -1")
+	check(c.standings()[0] == "-1  P2", "leaderboard is sorted (%s)" % c.standings()[0])
+	check(not c.is_over(), "round not over after 2 holes")
+
+
+func test_match_play() -> void:
+	var c := _comp(Competition.Mode.MATCH, 2)
+	c.record_hole(PackedInt32Array([3, 4]))
+	check(c.match_status() == "P1 1 UP thru 1", "P1 1 up (%s)" % c.match_status())
+	c.record_hole(PackedInt32Array([4, 4]))
+	check(c.match_row[1] == "1 UP", "halved hole keeps the standing")
+	for i in 14:
+		c.record_hole(PackedInt32Array([4, 4]))
+	c.record_hole(PackedInt32Array([3, 4]))
+	# 2 up with 1 to play: match over, 2 & 1.
+	check(c.is_over() and c.match_status() == "P1 wins 2 & 1", "match ends early (%s)" % c.match_status())
+	var d := _comp(Competition.Mode.MATCH, 2, 2)
+	d.record_hole(PackedInt32Array([4, 3]))
+	check(d.match_status() == "P2 1 UP (dormie)", "dormie (%s)" % d.match_status())
+	d.record_hole(PackedInt32Array([3, 4]))
+	check(d.is_over() and d.result_text() == "Match halved", "all square after the last hole is halved")
+
+
+func test_skins() -> void:
+	var c := _comp(Competition.Mode.SKINS, 3)
+	c.record_hole(PackedInt32Array([4, 4, 5]))
+	c.record_hole(PackedInt32Array([4, 4, 4]))
+	check(c.carry == 3 and c.skins_row[0] == "–", "tied holes carry the skin over")
+	var h := c.record_hole(PackedInt32Array([5, 3, 4]))
+	check(c.skins[1] == 3 and c.carry == 1, "outright win takes the pot (%s)" % h)
+	check(c.result_text() == "P2 wins with 3 skins", c.result_text())
+
+
+func test_team_formats() -> void:
+	var fb := _comp(Competition.Mode.FOURBALL, 4)
+	check(fb.ball_count() == 4 and fb.side_count() == 2, "fourball: 4 balls, 2 sides")
+	# Team 1's best is 3 (P2), team 2's best is 4.
+	fb.record_hole(PackedInt32Array([6, 3, 4, 5]))
+	check(fb.match_diff == 1 and fb.match_status().begins_with("P1 & P2 1 UP"), fb.match_status())
+	var fs := _comp(Competition.Mode.FOURSOMES, 4)
+	check(fs.ball_count() == 2 and fs.cards[1].player_name == "P3 & P4", "foursomes: one ball per team")
+	check(fs.hitter(0, 0, 1).name == "P1" and fs.hitter(0, 1, 1).name == "P2"
+			and fs.hitter(0, 2, 1).name == "P1", "partners alternate shots")
+	check(fs.hitter(1, 0, 2).name == "P4", "second partner drives on even holes")
+
+
+## The hard computer golfer should play a few holes respectably.
+func test_cpu_golfer() -> void:
+	var start := Time.get_ticks_msec()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	var over_par := 0
+	for n in range(1, 7):
+		var hole := Hole.new(n, 900 + n)
+		var pos := hole.tee
+		var lie := Surface.TEE
+		var shots := 0
+		var holed := false
+		while shots < 12 and not holed:
+			shots += 1
+			var p := CpuPlayer.plan(hole, pos, lie, Vector3(3, 0, 1), CpuPlayer.Skill.HARD, rng)
+			var putt := Aim.putt_speed(Aim.flat_distance(pos, hole.pin))
+			var r := BallPhysics.simulate(Clubs.launch_for(p.club, pos, p.heading, p.power,
+					p.accuracy, lie, putt), hole, Vector3(3, 0, 1))
+			match r.outcome:
+				BallPhysics.Outcome.HOLED:
+					holed = true
+				BallPhysics.Outcome.REST:
+					pos = r.rest
+					lie = hole.surface_at(pos.x, pos.z)
+				_:
+					shots += 1
+					pos = r.last_safe
+					lie = hole.surface_at(pos.x, pos.z)
+		over_par += shots - hole.par
+	check(over_par >= -8 and over_par <= 9, "hard CPU scores like a good golfer over 6 holes (got %+d)" % over_par)
+	print("cpu 6 holes %+d in %d ms" % [over_par, Time.get_ticks_msec() - start])

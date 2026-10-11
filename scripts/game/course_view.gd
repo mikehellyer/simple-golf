@@ -292,8 +292,10 @@ func _build_trees() -> void:
 func _tree_material(foliage: bool) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.roughness = 1.0
+	mat.metallic_specular = 0.1
 	if foliage:
 		mat.vertex_color_use_as_albedo = true
+		mat.vertex_color_is_srgb = true
 	else:
 		mat.albedo_color = Color(0.33, 0.23, 0.14)
 	return mat

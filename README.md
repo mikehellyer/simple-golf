@@ -7,6 +7,22 @@ update check.
 
 ## Playing
 
+Up to four players share one computer, taking turns as on a real course.
+Everyone tees off in honour order (best score on the previous hole first),
+then the ball farthest from the hole plays next. Any player can be a human
+or a computer golfer (easy, medium or hard). The computer reads each shot by
+simulating it, then mistimes the swing meter and misreads putts like a person.
+
+| Format | Players | How it works |
+| --- | --- | --- |
+| Stroke play | 1–4 | Fewest strokes over 18 holes |
+| Match play | 2 | Win holes; ends early when one player can't be caught (e.g. "3 & 2") |
+| Skins | 2–4 | Each hole is worth a skin; ties carry the skin over |
+| Fourball | 4 | Two teams of two, own balls, best score counts, match play |
+| Foursomes | 4 | Two teams of two sharing a ball, alternate shots, match play |
+
+The setup screen remembers your last line-up.
+
 | Key | Action |
 | --- | --- |
 | ← / → | Aim (hold Shift for fine aim) |
@@ -18,7 +34,7 @@ update check.
 | N | Sound on/off |
 | R | Re-aim at the pin |
 | F | Fullscreen |
-| Esc | Cancel a swing |
+| Esc | Cancel a swing; press twice to leave the round |
 | U | Open the download page when an update is available |
 
 **The swing meter** works like the original. The first click starts the
@@ -37,7 +53,7 @@ trunks as well as canopies, so a ball can rattle around in them.
 Every sound (strikes, bounces, the cup rattle, splashes, applause and the
 birdsong ambience) is synthesised at startup, so there are no audio assets.
 
-Run with `-- --demo` for an attract mode in which the computer plays.
+Run with `-- --demo` to watch four computer golfers play a fourball.
 
 ## Development
 
@@ -59,13 +75,17 @@ godot --headless --script res://tests/run_tests.gd
   - `ball_physics.gd`: flight, bounce, roll and cup capture
   - `clubs.gd`: the bag, and turning swing-meter results into launches
   - `scorecard.gd`: one player's card (totals, score relative to par, score names)
+  - `competition.gd`: formats, teams, honours, match standing and skins
+  - `aim.gd`: club choice, lay-up targets and default aim, shared by humans and the computer
+  - `cpu_player.gd`: the computer golfer (plans by simulation, errs by skill level)
   - `hole.gd`: procedural hole generation from a seed (terrain, fairway,
     green, bunkers, water, trees)
   - `surface.gd`: per-surface bounce, friction and roll constants
   - `updater.gd`: GitHub release check (autoload)
 - `scripts/game/` holds the presentation: course mesh (`course_view.gd`, with
   a high-resolution green complex), green slope grid, HUD, scorecard view,
-  swing meter, synthesised sound (`sfx.gd`), and the game loop and cameras.
+  setup menu, swing meter, synthesised sound (`sfx.gd`), and the game loop
+  and cameras.
 - `tests/run_tests.gd` is the headless test runner.
 
 ### Releasing
@@ -83,7 +103,7 @@ GitHub release.
 
 1. ~~Single player: terrain, swing meter, ball physics, cameras~~
 2. ~~Full scorecard, tree trunks, nicer greens with a slope grid, sound~~
-3. Hot-seat for 1–4 players; stroke, match, skins, foursomes and fourball
+3. ~~Hot-seat for 1–4 players; stroke, match, skins, foursomes and fourball~~
 4. Network play (Godot ENet, host/join; shots are deterministic, so only
    launches are sent)
 5. Course editor and seeded "course of the day"; .deb/.dmg/installer packaging

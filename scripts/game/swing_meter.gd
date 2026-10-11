@@ -23,6 +23,10 @@ var power := 0.0
 var accuracy := 0.0
 ## Text drawn above the bar's 100% mark, e.g. a putt length.
 var full_label := "100%"
+## When set, the meter clicks itself at these values (computer players).
+var _auto := false
+var _auto_power := 0.0
+var _auto_accuracy := 0.0
 
 
 func _ready() -> void:
@@ -30,11 +34,20 @@ func _ready() -> void:
 
 
 func reset() -> void:
+	_auto = false
 	phase = Phase.IDLE
 	value = 0.0
 	power = 0.0
 	accuracy = 0.0
 	queue_redraw()
+
+
+## Plays a whole swing on its own, stopping at the given power and accuracy.
+func autoplay(target_power: float, target_accuracy: float) -> void:
+	click()
+	_auto = true
+	_auto_power = clampf(target_power, 0.02, MAX_VALUE)
+	_auto_accuracy = clampf(target_accuracy, MIN_VALUE, _auto_power - 0.01)
 
 
 func click() -> void:
@@ -54,13 +67,18 @@ func _process(delta: float) -> void:
 	match phase:
 		Phase.BACKSWING:
 			value += BACKSWING_RATE * delta
-			if value >= MAX_VALUE:
+			if _auto and value >= _auto_power:
+				value = _auto_power
+				click()
+			elif value >= MAX_VALUE:
 				value = MAX_VALUE
 				power = MAX_VALUE
 				phase = Phase.DOWNSWING
 		Phase.DOWNSWING:
 			value -= DOWNSWING_RATE * delta
-			if value <= MIN_VALUE:
+			if _auto and value <= _auto_accuracy:
+				_finish(_auto_accuracy)
+			elif value <= MIN_VALUE:
 				_finish(MIN_VALUE)
 		_:
 			return
