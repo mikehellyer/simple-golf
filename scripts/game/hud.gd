@@ -149,7 +149,7 @@ func set_hint(text: String) -> void:
 
 
 func show_update(version: String) -> void:
-	_update_label.text = "Simple-Golf %s is available — press U to download" % version
+	_update_label.text = "Simple-Golf %s is available — update it from the clubhouse" % version
 
 
 func set_meter_visible(on: bool) -> void:

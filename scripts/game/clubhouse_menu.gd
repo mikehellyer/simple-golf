@@ -10,6 +10,7 @@ signal quit_requested
 var setup: SetupMenu
 var members_panel: MembersPanel
 var settings_panel: SettingsPanel
+var update_banner: UpdateBanner
 var _profiles: PlayerProfiles
 var _tab_play: Button
 var _tab_members: Button
@@ -62,6 +63,11 @@ func _ready() -> void:
 	quit.pressed.connect(func() -> void: quit_requested.emit())
 	row.add_child(quit)
 
+	update_banner = UpdateBanner.new()
+	update_banner.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	update_banner.offset_top = 56
+	add_child(update_banner)
+
 	var dock := MarginContainer.new()
 	dock.set_anchors_and_offsets_preset(Control.PRESET_RIGHT_WIDE)
 	dock.offset_left = -600
@@ -77,6 +83,9 @@ func _ready() -> void:
 	settings_panel = SettingsPanel.new()
 	settings_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	dock.add_child(settings_panel)
+	# Make room for the update banner when it's showing.
+	update_banner.shown_changed.connect(func() -> void:
+		dock.offset_top = 112 if update_banner.visible else 70)
 	members_panel.members_changed.connect(func() -> void:
 		setup.refresh_players()
 		members_changed.emit())

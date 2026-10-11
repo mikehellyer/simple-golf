@@ -178,6 +178,13 @@ func test_version_compare() -> void:
 	check(UpdaterScript.is_newer("1.2.10", "1.2.9"), "1.2.10 is newer than 1.2.9")
 	check(not UpdaterScript.is_newer("0.1.0", "0.1.0"), "equal versions are not newer")
 	check(not UpdaterScript.is_newer("0.1", "0.1.1"), "0.1 is older than 0.1.1")
+	var names := PackedStringArray(["simple-golf-0.3.0-linux-x86_64.tar.gz", "Simple-Golf-0.3.0-macOS.dmg",
+			"Simple-Golf-0.3.0-Windows-portable.zip", "Simple-Golf-0.3.0-Windows-Setup.exe",
+			"simple-golf_0.3.0_amd64.deb"])
+	check(UpdaterScript.pick_installer(names, "Linux") == "simple-golf_0.3.0_amd64.deb", "Linux updates with the .deb")
+	check(UpdaterScript.pick_installer(names, "macOS") == "Simple-Golf-0.3.0-macOS.dmg", "macOS updates with the .dmg")
+	check(UpdaterScript.pick_installer(names, "Windows") == "Simple-Golf-0.3.0-Windows-Setup.exe",
+			"Windows updates with the installer, not the portable zip")
 
 
 func test_shot_events() -> void:
