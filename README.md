@@ -21,7 +21,28 @@ simulating it, then mistimes the swing meter and misreads putts like a person.
 | Fourball | 4 | Two teams of two, own balls, best score counts, match play |
 | Foursomes | 4 | Two teams of two sharing a ball, alternate shots, match play |
 
-The setup screen remembers your last line-up.
+The setup screen remembers your last line-up. Rounds can be 18 or 9 holes.
+
+### Playing online
+
+One player chooses **Host a game**. The lobby shows the address the others
+should type into **Join** (port 24680). The host picks the format, adds any
+computer players and tees off. In team formats the first two players in the
+lobby play the last two.
+
+- On a home network (LAN) it works out of the box.
+- Over the internet, the host needs to forward UDP port 24680 on their router
+  to their computer.
+- Everyone must run the same version; the host turns away mismatches.
+- If someone drops out mid-round, the computer takes over their player.
+
+How it works: the host is authoritative. It runs the turn order and the
+computer golfers, and checks every shot request. A shot travels as its inputs
+(club, aim, power, timing) plus the host's verdict on where the ball finished.
+Every machine replays the swing on its meter and simulates the flight locally,
+which costs almost no bandwidth, then places the ball exactly where the host
+says, so tiny floating-point differences between platforms can never split
+the game.
 
 | Key | Action |
 | --- | --- |
@@ -67,6 +88,15 @@ godot --headless --import
 godot --headless --script res://tests/run_tests.gd
 ```
 
+The network test starts a host and a client on localhost, lets them play two
+holes against a computer golfer, and checks that both logs agree on every shot.
+`MODE`, `CPUS` and `PLAYERS` pick other formats; for example, `MODE=4
+CPUS=2,3 PLAYERS=4` plays foursomes.
+
+```bash
+tests/net_test.sh godot
+```
+
 ### Layout
 
 - `scripts/core/` holds the game rules, with no rendering code. The ball
@@ -86,7 +116,10 @@ godot --headless --script res://tests/run_tests.gd
   a high-resolution green complex), green slope grid, HUD, scorecard view,
   setup menu, swing meter, synthesised sound (`sfx.gd`), and the game loop
   and cameras.
-- `tests/run_tests.gd` is the headless test runner.
+- `scripts/net/net_session.gd` handles hosting and joining over ENet, plus the
+  lobby. The in-game messages are the `net_*` functions in `golf_game.gd`.
+- `tests/run_tests.gd` is the headless test runner, and `tests/net_test.sh` is
+  the two-machine network test.
 
 ### Releasing
 
@@ -104,6 +137,6 @@ GitHub release.
 1. ~~Single player: terrain, swing meter, ball physics, cameras~~
 2. ~~Full scorecard, tree trunks, nicer greens with a slope grid, sound~~
 3. ~~Hot-seat for 1–4 players; stroke, match, skins, foursomes and fourball~~
-4. Network play (Godot ENet, host/join; shots are deterministic, so only
-   launches are sent)
+4. ~~Network play: host/join over ENet with a lobby, host-authoritative shots,
+   computer takeover when a player drops~~
 5. Course editor and seeded "course of the day"; .deb/.dmg/installer packaging

@@ -1,14 +1,24 @@
 extends Node3D
-## Game loop: 1-4 players taking turns on one machine (human or computer),
-## in stroke play, match play, skins, fourball or foursomes.
+## Game loop: 1-4 players, on one machine or online, in stroke play, match
+## play, skins, fourball or foursomes.
+##
+## Everything that changes the game goes through the host (offline, this
+## machine is its own host): it decides whose turn it is, runs computer
+## players, and resolves each shot. A shot is shared as its inputs plus the
+## host's result, so every machine replays the swing, simulates the same
+## flight locally, then lands the ball exactly where the host says.
 ##
 ## Controls: Left/Right aim (Shift for fine), Up/Down club, Space or left
 ## click to swing, M overhead map, Tab scorecard, G green slope grid,
 ## N sound on/off, F fullscreen, Esc cancels a swing (twice: leave the round),
 ## U opens the download page when an update exists.
-## Run with `-- --demo` to watch the computer play a fourball.
+##
+## Command-line options (after `--`): --demo watches a computer fourball;
+## --host / --join=ADDR / --name=NAME / --autoplay / --auto-start=N /
+## --mode=N / --holes=N / --cpus=K,K / --quit-at-end / --net-log are used by
+## the automated network test.
 
-enum State { MENU, FLYBY, AIM, SWING, FLIGHT, RESULT, HOLE_DONE, ROUND_DONE }
+enum State { MENU, LOBBY, FLYBY, AIM, SWING, FLIGHT, RESULT, HOLE_DONE, ROUND_DONE }
 
 const YARDS := 1.09361
 const FEET := 3.28084
@@ -19,10 +29,12 @@ const RESULT_TIME := 2.0
 const CPU_AIM_TIME := 0.5
 const CPU_SWING_TIME := 1.5
 const AUTO_ADVANCE_TIME := 4.0
+const AIM_SEND_INTERVAL := 0.1
+## Host waits this long past the result for slow clients before moving on.
+const ACK_TIMEOUT := 12.0
 const MAX_STROKES := 12
 const MAX_WIND := 9.0
 const MAP_LAYER := 2
-const HOLES_PER_ROUND := 18
 
 
 ## One ball in play on the current hole.
@@ -47,6 +59,7 @@ var wind := Vector3.ZERO
 var state := State.MENU
 var state_time := 0.0
 
+var _hole_total := 18
 var _holes: Array[Hole] = []
 var _balls: Array[Ball] = []
 var _ball: Ball
@@ -54,9 +67,11 @@ var _hitter: Competition.Player
 var _tee_queue: Array[int] = []
 var _cpu_plan: CpuPlayer.Plan
 var _rng := RandomNumberGenerator.new()
+var _net: NetSession
 var _view: CourseView
 var _hud: Hud
 var _menu: SetupMenu
+var _lobby: LobbyMenu
 var _sfx: Sfx
 var _camera: Camera3D
 var _map_camera: Camera3D
@@ -67,6 +82,15 @@ var _map_pin: MeshInstance3D
 var _map_target: MeshInstance3D
 var _shot: BallPhysics.Result
 var _shot_start := Vector3.ZERO
+## The host's verdict on the shot being played: {pos, lie, strokes, done, outcome, msg}.
+var _resolution := {}
+var _swung_locally := false
+## Host: a shot for this turn has been decided and sent; don't decide again.
+var _decided := false
+## Host: peers that have finished watching the current shot.
+var _acks := {}
+var _replaying := false
+var _pending_swing := Vector2.ZERO
 var _event_index := 0
 var _playback := 0.0
 var _landing_cam := false
@@ -76,16 +100,27 @@ var _look_now := Vector3.ZERO
 var _putt_speed := 0.0
 var _show_grid := true
 var _quit_armed_at := -100.0
+var _aim_sent_at := 0.0
 var _update_url := ""
-var _demo := "--demo" in OS.get_cmdline_user_args()
+var _args := OS.get_cmdline_user_args()
+var _demo := "--demo" in _args
+var _autoplay := "--autoplay" in _args
+var _net_log := "--net-log" in _args
 
 
 func _ready() -> void:
 	_rng.randomize()
 	_build_world()
+	_net = NetSession.new()
+	_net.name = "Net"
+	add_child(_net)
+	_net.join_finished.connect(_on_join_finished)
+	_net.session_closed.connect(func(reason: String) -> void: _show_menu(reason))
+	_net.member_left.connect(_on_member_left)
+	_net.lobby_changed.connect(_maybe_auto_start)
 	_hud = Hud.new()
 	add_child(_hud)
-	_hud.meter.swing_finished.connect(_on_swing_finished)
+	_hud.meter.swing_finished.connect(_on_meter_finished)
 	_hud.meter.clicked.connect(func() -> void: _sfx.play("tick", -6.0))
 	_sfx = Sfx.new()
 	add_child(_sfx)
@@ -95,23 +130,60 @@ func _ready() -> void:
 	_menu = SetupMenu.new()
 	_menu.visible = false
 	_menu.start_requested.connect(_on_menu_start)
+	_menu.host_requested.connect(_on_host_requested)
+	_menu.join_requested.connect(_on_join_requested)
 	_menu.quit_requested.connect(func() -> void: get_tree().quit())
 	menu_layer.add_child(_menu)
+	_lobby = LobbyMenu.new()
+	_lobby.visible = false
+	_lobby.start_requested.connect(_on_lobby_start)
+	_lobby.leave_requested.connect(func() -> void:
+		_net.leave()
+		_show_menu())
+	menu_layer.add_child(_lobby)
 	Updater.update_available.connect(_on_update_available)
+
 	if _demo:
 		_start_demo()
+	elif "--host" in _args:
+		_show_menu()
+		_on_host_requested(_arg("name", "Host"))
+	elif _arg("join", "") != "":
+		_show_menu()
+		_on_join_requested(_arg("join", ""), _arg("name", "Guest"))
 	else:
 		_show_menu()
 
 
-# --- Menu and round flow ---------------------------------------------------
+## Value of a `--key=value` command-line option.
+func _arg(key: String, default: String) -> String:
+	for a in _args:
+		if a.begins_with("--%s=" % key):
+			return a.get_slice("=", 1)
+	return default
 
-func _show_menu() -> void:
+
+# --- Menus, lobby and sessions ---------------------------------------------
+
+func _show_menu(status := "") -> void:
+	if _net.is_online():
+		_net.leave()
 	_set_state(State.MENU)
 	_hud.visible = false
+	_lobby.visible = false
 	_clear_balls()
 	_show_hole(Hole.new(_rng.randi_range(1, 18), _rng.randi()))
-	_menu.open()
+	_menu.open(status)
+
+
+func _show_lobby() -> void:
+	_set_state(State.LOBBY)
+	_hud.visible = false
+	_menu.visible = false
+	_clear_balls()
+	if hole == null:
+		_show_hole(Hole.new(_rng.randi_range(1, 18), _rng.randi()))
+	_lobby.open(_net)
 
 
 func _start_demo() -> void:
@@ -120,29 +192,315 @@ func _start_demo() -> void:
 	for i in 4:
 		var kind := Competition.Kind.CPU_HARD if i % 2 == 0 else Competition.Kind.CPU_MEDIUM
 		players.append(Competition.Player.new(names[i], kind, Competition.COLOURS[i]))
-	_start_round(Competition.Mode.FOURBALL, players, _rng.randi())
+	_start_round(Competition.Mode.FOURBALL, players, 18)
 
 
-func _on_menu_start(mode: int, players: Array) -> void:
+func _on_menu_start(mode: int, players: Array, holes: int) -> void:
 	var typed: Array[Competition.Player] = []
 	typed.assign(players)
-	_start_round(mode as Competition.Mode, typed, _rng.randi())
+	_start_round(mode as Competition.Mode, typed, holes)
 
 
-func _start_round(mode: Competition.Mode, players: Array[Competition.Player], seed_value: int) -> void:
+func _on_host_requested(player_name: String) -> void:
+	var err := _net.host(NetSession.DEFAULT_PORT, player_name)
+	if err != OK:
+		_menu.open("Could not host on port %d (%s)." % [NetSession.DEFAULT_PORT, error_string(err)])
+		return
+	var s := _net.settings.duplicate(true)
+	s.mode = _arg("mode", "0").to_int()
+	s.holes = _arg("holes", "18").to_int()
+	s.cpus = []
+	for k in _arg("cpus", "").split(",", false):
+		s.cpus.append(k.to_int())
+	_net.set_settings(s)
+	_show_lobby()
+
+
+func _on_join_requested(address: String, player_name: String) -> void:
+	var err := _net.join(address, player_name)
+	if err != OK:
+		_menu.open("Could not connect to %s (%s)." % [address, error_string(err)])
+
+
+func _on_join_finished(ok: bool, reason: String) -> void:
+	if ok:
+		_show_lobby()
+	else:
+		_show_menu(reason)
+
+
+func _on_lobby_start() -> void:
+	var line_up := _net.line_up()
+	if not line_up.size() in Competition.PLAYER_COUNTS[_net.settings.mode]:
+		return
+	_start_round(_net.settings.mode, line_up, _net.settings.holes)
+
+
+## Automated test: the host tees off once enough players have joined.
+func _maybe_auto_start() -> void:
+	var want := _arg("auto-start", "0").to_int()
+	if want > 0 and _net.is_host and state == State.LOBBY and _net.line_up().size() >= want:
+		_on_lobby_start()
+
+
+func _on_member_left(peer_id: int) -> void:
+	if comp == null or state in [State.MENU, State.LOBBY]:
+		return
+	# The computer takes over anyone who drops out mid-round.
+	for i in comp.players.size():
+		if comp.players[i].owner == peer_id:
+			net_player_dropped.rpc(i)
+
+
+# --- Network messages ------------------------------------------------------
+# All game-changing messages come from the host ("authority"). Offline, the
+# same functions are called directly.
+
+func _online() -> bool:
+	return _net.is_online()
+
+
+func _is_authority() -> bool:
+	return not _online() or _net.is_host
+
+
+func _is_local(p: Competition.Player) -> bool:
+	return not _online() or p.owner == multiplayer.get_unique_id()
+
+
+@rpc("authority", "call_local", "reliable")
+func net_start_round(mode: int, player_dicts: Array, seed_value: int, holes: int) -> void:
+	var players: Array[Competition.Player] = []
+	for d in player_dicts:
+		players.append(Competition.Player.from_dict(d))
 	round_seed = seed_value
+	_hole_total = holes
 	_holes.clear()
 	var pars := PackedInt32Array()
 	var yards := PackedInt32Array()
-	for n in range(1, HOLES_PER_ROUND + 1):
+	for n in range(1, _hole_total + 1):
 		var h := Hole.new(n, _hole_seed(n))
 		_holes.append(h)
 		pars.append(h.par)
 		yards.append(roundi(h.yardage() * YARDS))
-	comp = Competition.new(mode, players, pars, yards)
+	comp = Competition.new(mode as Competition.Mode, players, pars, yards)
+	_menu.visible = false
+	_lobby.visible = false
 	_hud.visible = true
 	_start_hole(1)
 
+
+@rpc("authority", "call_local", "reliable")
+func net_start_hole(number: int) -> void:
+	_complete_pending_shot()
+	_start_hole(number)
+
+
+@rpc("authority", "call_local", "reliable")
+func net_begin_turn(ball_index: int) -> void:
+	_complete_pending_shot()
+	_hud.show_message("")
+	if ball_index < 0:
+		_hole_complete()
+	else:
+		_begin_turn(ball_index)
+
+
+## A shot has been decided: everyone replays the swing, then the flight.
+@rpc("authority", "call_local", "reliable")
+func net_play_shot(ball_index: int, shot_club: int, shot_heading: float, power: float,
+		accuracy: float, resolution: Dictionary) -> void:
+	_ball = _balls[ball_index]
+	club = shot_club
+	heading = shot_heading
+	_resolution = resolution
+	_pending_swing = Vector2(power, accuracy)
+	_acks.clear()
+	_putt_speed = Aim.putt_speed(Aim.flat_distance(_ball.pos, hole.pin))
+	_update_aim()
+	_update_hud()
+	if _swung_locally:
+		_swung_locally = false
+		_launch()
+	else:
+		_replaying = true
+		_hud.show_message("")
+		_set_state(State.SWING)
+		_hud.meter.autoplay(power, accuracy)
+
+
+## A client's swing, sent to the host for approval.
+@rpc("any_peer", "call_remote", "reliable")
+func net_request_shot(shot_club: int, shot_heading: float, power: float, accuracy: float) -> void:
+	if not _net.is_host or _hitter == null or state != State.AIM and state != State.SWING:
+		return
+	if multiplayer.get_remote_sender_id() != _hitter.owner or _hitter.is_cpu():
+		return
+	_decide_shot(_ball.index, clampi(shot_club, 0, Clubs.PUTTER), shot_heading,
+			clampf(power, 0.0, SwingMeter.MAX_VALUE), clampf(accuracy, SwingMeter.MIN_VALUE, 1.0))
+
+
+## Live aim from whoever is playing, so everyone can watch them line up.
+@rpc("any_peer", "call_remote", "unreliable_ordered")
+func net_aim(shot_club: int, shot_heading: float) -> void:
+	if _hitter == null or state != State.AIM:
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender != _hitter.owner:
+		return
+	club = clampi(shot_club, 0, Clubs.PUTTER)
+	heading = shot_heading
+	_update_green_grid()
+	_update_aim()
+	_update_hud()
+
+
+@rpc("authority", "call_local", "reliable")
+func net_round_complete() -> void:
+	_complete_pending_shot()
+	_round_complete()
+
+
+## Client to host: I've finished watching the shot.
+@rpc("any_peer", "call_remote", "reliable")
+func net_shot_done() -> void:
+	if _net.is_host:
+		_acks[multiplayer.get_remote_sender_id()] = true
+
+
+## If the host has moved on while this machine is still showing a shot
+## (a slow client), finish that shot instantly so no result is lost.
+func _complete_pending_shot() -> void:
+	if _replaying:
+		_replaying = false
+		_hud.meter.reset()
+		_launch()
+	if state == State.FLIGHT:
+		_finish_shot()
+
+
+## Host: everyone has seen the shot land (or we've waited long enough).
+func _everyone_caught_up() -> bool:
+	if not _online():
+		return true
+	if state_time > RESULT_TIME + ACK_TIMEOUT:
+		return true
+	for id in _net.members:
+		if id != 1 and not _acks.has(id):
+			return false
+	return true
+
+
+@rpc("authority", "call_local", "reliable")
+func net_to_lobby() -> void:
+	_show_lobby()
+
+
+@rpc("authority", "call_local", "reliable")
+func net_player_dropped(player_index: int) -> void:
+	var p := comp.players[player_index]
+	p.kind = Competition.Kind.CPU_MEDIUM
+	p.owner = 1
+	_hud.show_message("%s left — the computer takes over" % p.name)
+	if p == _hitter and (state == State.AIM or state == State.SWING) and not _replaying and not _decided:
+		_cpu_plan = null
+		_swung_locally = false
+		_set_state(State.AIM)
+
+
+# --- Round flow (host) -----------------------------------------------------
+
+func _start_round(mode: Competition.Mode, players: Array[Competition.Player], holes: int) -> void:
+	var dicts := players.map(func(p: Competition.Player) -> Dictionary: return p.to_dict())
+	var seed_value := _rng.randi()
+	if _online():
+		net_start_round.rpc(mode, dicts, seed_value, holes)
+	else:
+		net_start_round(mode, dicts, seed_value, holes)
+
+
+## Host: picks the next ball (honour order on the tee, then farthest from
+## the hole) and tells everyone; -1 means the hole is finished.
+func _advance_turn() -> void:
+	var next := -1
+	while next < 0 and not _tee_queue.is_empty():
+		var i: int = _tee_queue.pop_front()
+		if not _balls[i].done:
+			next = i
+	if next < 0:
+		var far := -1.0
+		for b in _balls:
+			var d := Aim.flat_distance(b.pos, hole.pin)
+			if not b.done and d > far:
+				far = d
+				next = b.index
+	if _online():
+		net_begin_turn.rpc(next)
+	else:
+		net_begin_turn(next)
+
+
+func _advance_hole() -> void:
+	if comp.is_over():
+		if _online():
+			net_round_complete.rpc()
+		else:
+			net_round_complete()
+	elif _online():
+		net_start_hole.rpc(hole.number + 1)
+	else:
+		net_start_hole(hole.number + 1)
+
+
+## Host: simulate the shot, settle where the ball ends up, tell everyone.
+func _decide_shot(ball_index: int, shot_club: int, shot_heading: float, power: float, accuracy: float) -> void:
+	if _decided:
+		return
+	_decided = true
+	var b := _balls[ball_index]
+	var launch := Clubs.launch_for(shot_club, b.pos, shot_heading, power, accuracy, b.lie,
+			Aim.putt_speed(Aim.flat_distance(b.pos, hole.pin)))
+	var result := BallPhysics.simulate(launch, hole, wind)
+	var resolution := _resolve(result, b, shot_club)
+	if _online():
+		net_play_shot.rpc(ball_index, shot_club, shot_heading, power, accuracy, resolution)
+	else:
+		net_play_shot(ball_index, shot_club, shot_heading, power, accuracy, resolution)
+
+
+## Where the ball ends up after a shot, with penalties applied.
+func _resolve(r: BallPhysics.Result, b: Ball, shot_club: int) -> Dictionary:
+	var out := {pos = b.pos, lie = b.lie, strokes = b.strokes + 1, done = false, outcome = r.outcome}
+	var msg := ""
+	match r.outcome:
+		BallPhysics.Outcome.HOLED:
+			out.done = true
+			out.pos = hole.pin
+			msg = "HOLE IN ONE!" if out.strokes == 1 else "In the hole!"
+		BallPhysics.Outcome.WATER:
+			out.strokes += 1
+			out.pos = _drop_point(r, b.pos)
+			msg = "Splash!\nOne stroke penalty — ball dropped"
+		BallPhysics.Outcome.OUT_OF_BOUNDS:
+			out.strokes += 1
+			msg = "Out of bounds\nStroke and distance"
+		_:
+			out.pos = r.rest
+			var lie := hole.surface_at(r.rest.x, r.rest.z)
+			msg = Surface.NAMES[lie]
+			if shot_club != Clubs.PUTTER:
+				msg += "\ncarried %d yds" % roundi(r.carry * YARDS)
+			elif lie == Surface.GREEN:
+				msg = "%d ft to go" % ceili(Aim.flat_distance(r.rest, hole.pin) * FEET)
+	out.lie = hole.surface_at(out.pos.x, out.pos.z) if r.outcome != BallPhysics.Outcome.HOLED else Surface.GREEN
+	if not out.done and out.strokes >= MAX_STROKES:
+		out.done = true
+		msg += "\nPicked up"
+	out.msg = msg
+	return out
+
+
+# --- Hole and turn flow (everyone) -----------------------------------------
 
 func _hole_seed(number: int) -> int:
 	return round_seed * 31 + number * 7919
@@ -180,49 +538,45 @@ func _start_hole(number: int) -> void:
 	_hud.show_message("Hole %d\nPar %d  ·  %d yards" % [hole.number, hole.par, roundi(hole.yardage() * YARDS)])
 
 
-## Decides who plays next: everyone tees off in honour order, then the ball
-## farthest from the hole is always next.
-func _next_turn() -> void:
-	var next: Ball = null
-	while next == null and not _tee_queue.is_empty():
-		var b := _balls[_tee_queue.pop_front()]
-		if not b.done:
-			next = b
-	if next == null:
-		var far := -1.0
-		for b in _balls:
-			var d := Aim.flat_distance(b.pos, hole.pin)
-			if not b.done and d > far:
-				far = d
-				next = b
-	if next == null:
-		_hole_complete()
-		return
-	_ball = next
+func _begin_turn(ball_index: int) -> void:
+	_ball = _balls[ball_index]
 	_hitter = comp.hitter(_ball.index, _ball.swings, hole.number)
 	_cpu_plan = null
-	_prepare_shot()
-	_set_state(State.AIM)
-	if comp.players.size() > 1:
-		_hud.show_message("%s to play" % _hitter.name)
-
-
-func _prepare_shot() -> void:
+	_swung_locally = false
+	_replaying = false
+	_decided = false
 	var dist := Aim.flat_distance(_ball.pos, hole.pin)
 	club = Aim.pick_club(dist, _ball.lie)
 	_putt_speed = Aim.putt_speed(dist)
 	heading = Aim.default_heading(hole, _ball.pos, club, _ball.lie)
 	_update_aim()
 	_update_hud()
+	_set_state(State.AIM)
+	if comp.players.size() > 1:
+		_hud.show_message("%s to play" % _hitter.name)
 
 
-func _on_swing_finished(power: float, accuracy: float) -> void:
-	_ball.strokes += 1
+func _on_meter_finished(power: float, accuracy: float) -> void:
+	if _replaying:
+		_replaying = false
+		_launch()
+		return
+	# A swing made on this machine: the host decides it; clients ask the host.
+	_swung_locally = true
+	if _is_authority():
+		_decide_shot(_ball.index, club, heading, power, accuracy)
+	else:
+		net_request_shot.rpc_id(1, club, heading, power, accuracy)
+		_hud.set_hint("Waiting for the host…")
+
+
+func _launch() -> void:
 	_ball.swings += 1
 	_shot_start = _ball.pos
-	var launch := Clubs.launch_for(club, _ball.pos, heading, power, accuracy, _ball.lie, _putt_speed)
+	var launch := Clubs.launch_for(club, _ball.pos, heading, _pending_swing.x, _pending_swing.y,
+			_ball.lie, _putt_speed)
 	_shot = BallPhysics.simulate(launch, hole, wind)
-	_play_strike(power)
+	_play_strike(_pending_swing.x)
 	_event_index = 0
 	_playback = 0.0
 	_landing_cam = false
@@ -230,36 +584,22 @@ func _on_swing_finished(power: float, accuracy: float) -> void:
 
 
 func _finish_shot() -> void:
-	var msg := ""
-	match _shot.outcome:
-		BallPhysics.Outcome.HOLED:
-			_ball.done = true
-			_ball.pos = hole.pin
-			msg = "HOLE IN ONE!" if _ball.strokes == 1 else "In the hole!"
-		BallPhysics.Outcome.WATER:
-			_ball.strokes += 1
-			_ball.pos = _drop_point()
-			_ball.lie = hole.surface_at(_ball.pos.x, _ball.pos.z)
-			msg = "Splash!\nOne stroke penalty — ball dropped"
-		BallPhysics.Outcome.OUT_OF_BOUNDS:
-			_ball.strokes += 1
-			_ball.pos = _shot_start
-			msg = "Out of bounds\nStroke and distance"
-		_:
-			_ball.pos = _shot.rest
-			_ball.lie = hole.surface_at(_ball.pos.x, _ball.pos.z)
-			msg = Surface.NAMES[_ball.lie]
-			if club != Clubs.PUTTER:
-				msg += "\ncarried %d yds" % roundi(_shot.carry * YARDS)
-			elif _ball.lie == Surface.GREEN:
-				msg = "%d ft to go" % ceili(Aim.flat_distance(_ball.pos, hole.pin) * FEET)
-	if not _ball.done and _ball.strokes >= MAX_STROKES:
-		_ball.done = true
-		msg += "\nPicked up"
+	var r := _resolution
+	if _net_log:
+		print("SHOT hole=%d ball=%d strokes=%d outcome=%d pos=%.3f,%.3f,%.3f local=%.3f,%.3f,%.3f" % [
+				hole.number, _ball.index, r.strokes, r.outcome, r.pos.x, r.pos.y, r.pos.z,
+				_shot.rest.x, _shot.rest.y, _shot.rest.z])
+	_ball.pos = r.pos
+	_ball.lie = r.lie
+	_ball.strokes = r.strokes
+	_ball.done = r.done
+	_ball.mesh.position = _ball.pos
+	_ball.mesh.visible = r.outcome != BallPhysics.Outcome.HOLED
+	if _online() and not _net.is_host:
+		net_shot_done.rpc_id(1)
+	var msg: String = r.msg
 	if comp.players.size() > 1:
 		msg = "%s: %s" % [_hitter.name, msg]
-	_ball.mesh.position = _ball.pos
-	_ball.mesh.visible = not (_ball.done and _shot.outcome == BallPhysics.Outcome.HOLED)
 	_hud.show_message(msg)
 	_set_state(State.RESULT)
 
@@ -271,6 +611,8 @@ func _hole_complete() -> void:
 		strokes.append(b.strokes)
 		best = mini(best, b.strokes)
 	var headline := comp.record_hole(strokes)
+	if _net_log:
+		print("HOLE %d %s" % [hole.number, strokes])
 	if best < hole.par or best == 1:
 		_sfx.play("applause")
 	elif best == hole.par:
@@ -284,9 +626,14 @@ func _hole_complete() -> void:
 
 
 func _round_complete() -> void:
+	if _net_log:
+		print("ROUND %s" % comp.result_text())
 	_sfx.play("applause")
 	_show_card(comp.result_text(), 0)
 	_set_state(State.ROUND_DONE)
+	if "--quit-at-end" in _args:
+		await get_tree().create_timer(1.0).timeout
+		get_tree().quit()
 
 
 func _show_card(headline: String, current_hole: int) -> void:
@@ -309,7 +656,7 @@ func _set_state(s: State) -> void:
 	state = s
 	state_time = 0.0
 	var aiming := s == State.AIM or s == State.SWING
-	var human := _hitter != null and not _hitter.is_cpu()
+	var mine := _human_controls()
 	_marker.visible = aiming
 	_aim_line.visible = aiming
 	_map_target.visible = aiming
@@ -318,29 +665,40 @@ func _set_state(s: State) -> void:
 	_update_green_grid()
 	if s == State.AIM or s == State.FLYBY:
 		_hud.scorecard.visible = false
+	var host := _is_authority()
 	match s:
 		State.FLYBY:
-			_hud.set_hint("Space: skip fly-by")
+			_hud.set_hint("Space: skip fly-by" if host else "")
 		State.AIM:
 			_hud.meter.reset()
-			_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  Space swing  ·  M map  ·  Tab card  ·  G slopes  ·  N sound"
-					if human else "%s is thinking…" % _hitter.name)
+			if mine:
+				_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  Space swing  ·  M map  ·  Tab card  ·  G slopes  ·  N sound")
+			elif _hitter.is_cpu():
+				_hud.set_hint("%s is thinking…" % _hitter.name)
+			else:
+				_hud.set_hint("%s is lining up…" % _hitter.name)
 		State.SWING:
-			_hud.set_hint("Space: set power, then again on the white line" if human else "")
+			_hud.set_hint("Space: set power, then again on the white line" if mine and not _replaying else "")
 		State.FLIGHT:
 			_hud.set_hint("Space: skip")
 		State.RESULT:
 			_hud.set_hint("")
 		State.HOLE_DONE:
-			_hud.set_hint("Space: finish" if comp.is_over() else "Space: next hole")
+			if host:
+				_hud.set_hint("Space: finish" if comp.is_over() else "Space: next hole")
+			else:
+				_hud.set_hint("Waiting for the host…")
 		State.ROUND_DONE:
-			_hud.set_hint("Space: back to the menu")
+			if not _online():
+				_hud.set_hint("Space: back to the menu")
+			else:
+				_hud.set_hint("Space: back to the lobby" if host else "Waiting for the host…")
 
 
 # --- Input -----------------------------------------------------------------
 
 func _unhandled_input(event: InputEvent) -> void:
-	if state == State.MENU:
+	if state == State.MENU or state == State.LOBBY:
 		return
 	if event is InputEventMouseButton:
 		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
@@ -361,10 +719,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			else:
 				_map_camera.make_current()
 		KEY_R:
-			if state == State.AIM and _is_human_turn():
+			if state == State.AIM and _human_controls():
 				heading = Aim.heading_to(_ball.pos, hole.pin)
-				_update_aim()
-				_update_hud()
+				_aim_changed()
 		KEY_F:
 			var full := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if full
@@ -384,7 +741,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_N:
 			_hud.show_message("Sound off" if _sfx.toggle_mute() else "Sound on")
 		KEY_ESCAPE:
-			if state == State.SWING and _is_human_turn():
+			if state == State.SWING and _human_controls() and not _swung_locally and not _replaying:
 				_set_state(State.AIM)
 			elif Time.get_ticks_msec() / 1000.0 - _quit_armed_at < 2.5:
 				_show_menu()
@@ -396,39 +753,49 @@ func _unhandled_input(event: InputEvent) -> void:
 func _action() -> void:
 	match state:
 		State.FLYBY:
-			_hud.show_message("")
-			_next_turn()
+			if _is_authority():
+				_advance_turn()
 		State.AIM:
-			if _is_human_turn():
+			if _human_controls():
 				_hud.show_message("")
 				_set_state(State.SWING)
 				_hud.meter.click()
 		State.SWING:
-			if _is_human_turn():
+			if _human_controls() and not _replaying and not _swung_locally:
 				_hud.meter.click()
 		State.FLIGHT:
 			# Skip ahead, keeping only the final sound (cup, splash...).
 			_event_index = maxi(_event_index, _shot.events.size() - 1)
 			_playback = INF
 		State.RESULT:
-			state_time = RESULT_TIME
+			if _is_authority():
+				state_time = RESULT_TIME
 		State.HOLE_DONE:
-			if comp.is_over():
-				_round_complete()
-			else:
-				_start_hole(hole.number + 1)
+			if _is_authority():
+				_advance_hole()
 		State.ROUND_DONE:
 			if _demo:
 				_start_demo()
-			else:
+			elif not _online():
 				_show_menu()
+			elif _net.is_host:
+				net_to_lobby.rpc()
 
 
-func _is_human_turn() -> bool:
-	return _hitter != null and not _hitter.is_cpu()
+## A human at this machine is playing the current shot.
+func _human_controls() -> bool:
+	return _hitter != null and not _hitter.is_cpu() and _is_local(_hitter) and not _autoplay
 
 
-func _all_cpu() -> bool:
+## The computer at this machine plays the current shot (a computer golfer
+## on the host, or a human in --autoplay test mode).
+func _cpu_controls() -> bool:
+	return _hitter != null and _is_local(_hitter) and (_hitter.is_cpu() or _autoplay)
+
+
+func _no_humans_here() -> bool:
+	if _autoplay:
+		return true
 	for p in comp.players:
 		if not p.is_cpu():
 			return false
@@ -436,13 +803,22 @@ func _all_cpu() -> bool:
 
 
 func _change_club(step: int) -> void:
-	if state != State.AIM or not _is_human_turn():
+	if state != State.AIM or not _human_controls():
 		return
 	var first := Clubs.DRIVER if _ball.lie == Surface.TEE else Clubs.DRIVER + 1
 	club = clampi(club + step, first, Clubs.PUTTER)
+	_aim_changed()
+
+
+## The local player moved their aim or changed club: redraw and tell others.
+func _aim_changed() -> void:
 	_update_green_grid()
 	_update_aim()
 	_update_hud()
+	var now := Time.get_ticks_msec() / 1000.0
+	if _online() and now - _aim_sent_at > AIM_SEND_INTERVAL:
+		_aim_sent_at = now
+		net_aim.rpc(club, heading)
 
 
 func _on_update_available(version: String, url: String) -> void:
@@ -455,7 +831,7 @@ func _on_update_available(version: String, url: String) -> void:
 func _process(delta: float) -> void:
 	state_time += delta
 	match state:
-		State.MENU:
+		State.MENU, State.LOBBY:
 			var a := state_time * 0.05
 			var z := hole.length * 0.6
 			var centre := Vector3(hole.centre_x(z), hole.height_at(hole.centre_x(z), z), z)
@@ -463,13 +839,12 @@ func _process(delta: float) -> void:
 			_cam_look = centre
 		State.FLYBY:
 			_flyby_camera()
-			if state_time > FLYBY_TIME or (_all_cpu() and state_time > FLYBY_TIME * 0.5):
-				_hud.show_message("")
-				_next_turn()
+			if _is_authority() and (state_time > FLYBY_TIME or (_no_humans_here() and state_time > FLYBY_TIME * 0.5)):
+				_advance_turn()
 		State.AIM:
-			if _is_human_turn():
+			if _human_controls():
 				_handle_aim_keys(delta)
-			else:
+			elif _cpu_controls():
 				_cpu_turn()
 			_aim_camera()
 		State.SWING:
@@ -477,21 +852,21 @@ func _process(delta: float) -> void:
 		State.FLIGHT:
 			_advance_flight(delta)
 		State.RESULT:
-			if state_time > RESULT_TIME:
-				_hud.show_message("")
-				_next_turn()
+			if _is_authority() and state_time > RESULT_TIME and _everyone_caught_up():
+				_advance_turn()
 		State.HOLE_DONE, State.ROUND_DONE:
 			var a := state_time * 0.25
 			_cam_target = hole.pin + Vector3(sin(a) * 14.0, 5.0, cos(a) * 14.0)
 			_cam_look = hole.pin
-			if _all_cpu() and state_time > AUTO_ADVANCE_TIME:
+			if _is_authority() and _no_humans_here() and state_time > AUTO_ADVANCE_TIME:
 				_action()
 	_move_camera(delta)
 	for b in _balls:
 		b.mesh.scale = Vector3.ONE * maxf(1.0, _camera.global_position.distance_to(b.mesh.position) / 30.0)
 		b.map_marker.position = b.mesh.position
 		b.map_marker.visible = b.mesh.visible
-	_map_pin.position = hole.pin
+	if hole:
+		_map_pin.position = hole.pin
 
 
 ## The computer looks over the shot for a moment, settles on a plan, then
@@ -502,13 +877,17 @@ func _cpu_turn() -> void:
 			_cpu_plan = CpuPlayer.plan(hole, _ball.pos, _ball.lie, wind, _hitter.skill(), _rng)
 			club = _cpu_plan.club
 			heading = _cpu_plan.heading
-			_update_green_grid()
-			_update_aim()
-			_update_hud()
+			_aim_sent_at = -1.0
+			_aim_changed()
 	elif state_time > CPU_SWING_TIME:
-		_hud.show_message("")
-		_set_state(State.SWING)
-		_hud.meter.autoplay(_cpu_plan.power, _cpu_plan.accuracy)
+		if _hitter.is_cpu():
+			# Host-run computer golfer: decide now; everyone replays the swing.
+			_decide_shot(_ball.index, club, heading, _cpu_plan.power, _cpu_plan.accuracy)
+		else:
+			# --autoplay: swing this machine's human player on the meter.
+			_hud.show_message("")
+			_set_state(State.SWING)
+			_hud.meter.autoplay(_cpu_plan.power, _cpu_plan.accuracy)
 
 
 func _handle_aim_keys(delta: float) -> void:
@@ -525,8 +904,7 @@ func _handle_aim_keys(delta: float) -> void:
 	if Input.is_key_pressed(KEY_SHIFT):
 		rate *= 0.25
 	heading += turn * rate * delta
-	_update_aim()
-	_update_hud()
+	_aim_changed()
 
 
 func _advance_flight(delta: float) -> void:
@@ -738,17 +1116,17 @@ func _update_green_grid() -> void:
 				and (state == State.AIM or state == State.SWING)
 
 
-func _drop_point() -> Vector3:
-	var path := _shot.path
+func _drop_point(r: BallPhysics.Result, start: Vector3) -> Vector3:
+	var path := r.path
 	for k in range(path.size() - 1, -1, -1):
 		var p := path[k]
 		if hole.is_in_bounds(p.x, p.z) and hole.surface_at(p.x, p.z) != Surface.WATER:
-			var d := p + _flat(_shot_start - p).normalized() * 3.0
+			var d := p + _flat(start - p).normalized() * 3.0
 			if hole.surface_at(d.x, d.z) == Surface.WATER:
 				d = p
 			d.y = hole.height_at(d.x, d.z)
 			return d
-	return _shot_start
+	return start
 
 
 # --- Balls -----------------------------------------------------------------

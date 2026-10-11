@@ -3,7 +3,9 @@ extends Control
 ## The first screen: pick a format and who is playing. The last line-up is
 ## remembered between sessions.
 
-signal start_requested(mode: int, players: Array)
+signal start_requested(mode: int, players: Array, holes: int)
+signal host_requested(player_name: String)
+signal join_requested(address: String, player_name: String)
 signal quit_requested
 
 const SETTINGS_PATH := "user://settings.cfg"
@@ -11,6 +13,9 @@ const MAX_PLAYERS := 4
 
 var _mode: OptionButton
 var _count: OptionButton
+var _holes: OptionButton
+var _address: LineEdit
+var _status: Label
 var _info: Label
 var _rows: Array[HBoxContainer] = []
 var _tags: Array[Label] = []
@@ -60,6 +65,10 @@ func _ready() -> void:
 	_count = OptionButton.new()
 	_count.item_selected.connect(func(_i: int) -> void: _refresh_rows())
 	box.add_child(_labelled("Players", _count))
+	_holes = OptionButton.new()
+	_holes.add_item("18 holes")
+	_holes.add_item("9 holes")
+	box.add_child(_labelled("Length", _holes))
 
 	for i in MAX_PLAYERS:
 		var row := HBoxContainer.new()
@@ -100,12 +109,42 @@ func _ready() -> void:
 	buttons.add_child(quit)
 	box.add_child(buttons)
 
+	box.add_child(HSeparator.new())
+	var online := HBoxContainer.new()
+	online.add_theme_constant_override("separation", 8)
+	var online_label := Label.new()
+	online_label.text = "Online"
+	online_label.custom_minimum_size = Vector2(70, 0)
+	online.add_child(online_label)
+	var host := Button.new()
+	host.text = "Host a game"
+	host.pressed.connect(func() -> void:
+		_save()
+		host_requested.emit(_first_name()))
+	online.add_child(host)
+	_address = LineEdit.new()
+	_address.placeholder_text = "host address"
+	_address.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_address.text_submitted.connect(func(_t: String) -> void: _on_join())
+	online.add_child(_address)
+	var join := Button.new()
+	join.text = "Join"
+	join.pressed.connect(_on_join)
+	online.add_child(join)
+	box.add_child(online)
+	_status = Label.new()
+	_status.modulate = Color(1.0, 0.75, 0.5)
+	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(_status)
+
 	_load()
 	_refresh()
 
 
-func open() -> void:
+func open(status := "") -> void:
 	visible = true
+	_status.text = status
 	_start.grab_focus()
 
 
@@ -163,19 +202,39 @@ func _players(all_cpu: bool) -> Array[Competition.Player]:
 func _on_start() -> void:
 	_save()
 	visible = false
-	start_requested.emit(_mode.selected as Competition.Mode, _players(false))
+	start_requested.emit(_mode.selected, _players(false), _hole_count())
 
 
 func _on_watch() -> void:
 	_save()
 	visible = false
-	start_requested.emit(_mode.selected as Competition.Mode, _players(true))
+	start_requested.emit(_mode.selected, _players(true), _hole_count())
+
+
+func _on_join() -> void:
+	if _address.text.strip_edges() == "":
+		_status.text = "Enter the host's address, e.g. 192.168.1.20"
+		return
+	_save()
+	_status.text = "Connecting…"
+	join_requested.emit(_address.text, _first_name())
+
+
+func _first_name() -> String:
+	var n := _names[0].text.strip_edges()
+	return n if n != "" else "Player 1"
+
+
+func _hole_count() -> int:
+	return 18 if _holes.selected == 0 else 9
 
 
 func _load() -> void:
 	var cfg := ConfigFile.new()
 	cfg.load(SETTINGS_PATH)
 	_mode.select(cfg.get_value("game", "mode", 0))
+	_holes.select(cfg.get_value("game", "holes_option", 0))
+	_address.text = cfg.get_value("online", "address", "")
 	_refresh()
 	var count: int = cfg.get_value("game", "players", 1)
 	var counts: Array = Competition.PLAYER_COUNTS[_mode.selected]
@@ -190,6 +249,8 @@ func _save() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("game", "mode", _mode.selected)
 	cfg.set_value("game", "players", _player_count())
+	cfg.set_value("game", "holes_option", _holes.selected)
+	cfg.set_value("online", "address", _address.text)
 	for i in MAX_PLAYERS:
 		cfg.set_value("players", "name%d" % i, _names[i].text)
 		cfg.set_value("players", "kind%d" % i, _kinds[i].selected)

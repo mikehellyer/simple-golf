@@ -46,7 +46,8 @@ func show_cards(cards: Array[Scorecard], current_hole: int, headline: String,
 		_grid.remove_child(child)
 		child.queue_free()
 	_add_nine(cards, 0, "Out", current_hole, extra_rows)
-	_add_nine(cards, 9, "In", current_hole, extra_rows)
+	if cards[0].hole_count() > 9:
+		_add_nine(cards, 9, "In", current_hole, extra_rows)
 	visible = true
 
 

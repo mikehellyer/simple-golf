@@ -25,3 +25,6 @@ jobs:
 
       - name: Run tests
         run: godot --headless --script res://tests/run_tests.gd
+
+      - name: Network test (host and client over localhost)
+        run: tests/net_test.sh godot

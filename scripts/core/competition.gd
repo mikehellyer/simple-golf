@@ -27,6 +27,8 @@ class Player:
 	var name: String
 	var kind: Kind
 	var colour: Color
+	## Network peer that controls this player (1 = host, or offline).
+	var owner := 1
 
 	func _init(player_name: String, player_kind: Kind, player_colour: Color) -> void:
 		name = player_name
@@ -38,6 +40,14 @@ class Player:
 
 	func skill() -> CpuPlayer.Skill:
 		return maxi(kind - 1, 0) as CpuPlayer.Skill
+
+	func to_dict() -> Dictionary:
+		return {name = name, kind = kind, colour = colour, owner = owner}
+
+	static func from_dict(d: Dictionary) -> Player:
+		var p := Player.new(d.name, d.kind, d.colour)
+		p.owner = d.owner
+		return p
 
 
 var mode: Mode
