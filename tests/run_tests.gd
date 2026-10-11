@@ -28,6 +28,8 @@ func _init() -> void:
 	test_skins()
 	test_team_formats()
 	test_cpu_golfer()
+	test_hole_overrides()
+	test_course_codes()
 	print("\n%d passed, %d failed" % [_passes, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -334,3 +336,47 @@ func test_cpu_golfer() -> void:
 		over_par += shots - hole.par
 	check(over_par >= -8 and over_par <= 9, "hard CPU scores like a good golfer over 6 holes (got %+d)" % over_par)
 	print("cpu 6 holes %+d in %d ms" % [over_par, Time.get_ticks_msec() - start])
+
+
+func test_hole_overrides() -> void:
+	var plain := Hole.new(5, 321)
+	var dry := Hole.new(5, 321, {water = 1})
+	check(dry.ponds.is_empty(), "water: none removes ponds")
+	check(dry.pin == plain.pin or plain.ponds.size() > 0 and dry.length == plain.length,
+			"removing water leaves the layout alone")
+	check(dry.bunkers == plain.bunkers, "removing water leaves the bunkers alone")
+	var wet := Hole.new(5, 321, {water = 2})
+	check(wet.ponds.size() == 1, "water: add always makes a pond")
+	var long := Hole.new(5, 321, {length = 480.0, par = 5})
+	check(long.par == 5 and absf(long.length - 480.0) < 0.01, "par and length overrides")
+	check(long.surface_at(long.pin.x, long.pin.z) == Surface.GREEN, "overridden hole still has its pin on the green")
+	check(Hole.new(5, 321, {bunkers = 1}).bunkers.is_empty(), "bunkers: none")
+	check(Hole.new(5, 321, {bunkers = 2}).bunkers.size() > plain.bunkers.size(), "bunkers: extra")
+	check(Hole.new(5, 321, {trees = 0.0}).trees.is_empty(), "trees: 0 clears the trees")
+	check(Hole.new(5, 321, {pin = 7}).pin != plain.pin, "new pin position")
+	check(is_equal_approx(Hole.new(5, 321, {relief = 4.5}).feature("relief"), 4.5), "feature() reports overrides")
+
+
+func test_course_codes() -> void:
+	var c := Course.new("Test", 123456789)
+	var plain := Course.from_code(c.to_code())
+	check(c.to_code().begins_with("SG-") and plain != null and plain.base_seed == 123456789,
+			"plain course code round-trips (%s)" % c.to_code())
+	c.set_hole_overrides(3, {water = 2, length = 200.0})
+	var code := c.to_code()
+	var back := Course.from_code(code)
+	check(code.begins_with("SGX-") and back != null and back.name == "Test"
+			and back.hole_overrides(3).water == 2.0, "edited course code round-trips")
+	check(back.make_hole(3).ponds.size() == 1 and back.make_hole(4).pin == c.make_hole(4).pin,
+			"decoded course builds the same holes")
+	check(Course.from_code("nonsense") == null and Course.from_code("SGX-!!!") == null, "bad codes rejected")
+	var hostile := Course.from_dict({seed = 5, edits = {"2": {length = 99999.0, evil = 1}, "40": {par = 3}}})
+	check(hostile.hole_overrides(2).length == 560.0 and not hostile.hole_overrides(2).has("evil")
+			and hostile.edits.size() == 1, "untrusted courses are clamped and cleaned")
+	var day := {year = 2026, month = 10, day = 11}
+	check(Course.daily(day).base_seed == Course.daily(day).base_seed
+			and Course.daily(day).base_seed != Course.daily({year = 2026, month = 10, day = 12}).base_seed,
+			"course of the day is stable for a date and changes daily")
+	var other := Course.new("Layout", 99)
+	other.set_hole_overrides(1, {layout = 3})
+	check(other.make_hole(1).pin != Course.new("Layout", 99).make_hole(1).pin, "new layout changes the hole")

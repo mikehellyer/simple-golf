@@ -23,6 +23,24 @@ simulating it, then mistimes the swing meter and misreads putts like a person.
 
 The setup screen remembers your last line-up. Rounds can be 18 or 9 holes.
 
+### Courses
+
+Every course is generated from a seed, so a whole course fits in a short code.
+
+- **Random course** gives a fresh course every time.
+- **Course of the day** is the same for everyone in the world on a given
+  (UTC) date, so you can compare scores with friends.
+- **Course codes:** the scorecard at the end of a round shows the course's
+  code (`SG-…`). Paste it into the menu's code box to replay that course.
+- **Course editor** (Edit… on the menu): step through the holes and change
+  each one's par, length, dogleg, green position and size, fairway width,
+  hills, water, bunkers, trees and pin position, or roll a new layout. The
+  hole updates from above as you edit. Every change sits on top of the
+  generated hole, so "Reset hole" always restores it. **Save** keeps the
+  course on this computer, and **Copy code** gives you an `SGX-…` code with
+  your edits for others to paste in. Saved courses can also be chosen in the
+  online lobby.
+
 ### Playing online
 
 One player chooses **Host a game**. The lobby shows the address the others
@@ -76,6 +94,21 @@ birdsong ambience) is synthesised at startup, so there are no audio assets.
 
 Run with `-- --demo` to watch four computer golfers play a fourball.
 
+## Installing
+
+Download the latest version from the
+[Releases page](https://github.com/mikehellyer/simple-golf/releases):
+
+| Platform | Download |
+| --- | --- |
+| Linux (Debian, Ubuntu, Pop!_OS…) | `simple-golf_<version>_amd64.deb`, or the `.tar.gz` for other distributions |
+| macOS | `Simple-Golf-<version>-macOS.dmg`; drag the app to Applications |
+| Windows | `Simple-Golf-<version>-Windows-Setup.exe`, or the portable `.zip` |
+
+The macOS and Windows builds aren't code-signed yet. The first time you open
+the game on macOS, right-click it and choose **Open**. On Windows, choose
+**More info → Run anyway** in SmartScreen.
+
 ## Development
 
 You need Godot 4.7.2. Download the editor from
@@ -123,14 +156,19 @@ tests/net_test.sh godot
 
 ### Releasing
 
-Bump `config/version` in `project.godot`, commit, then tag and push:
+To build every installer without publishing anything, run **Actions →
+Release → Run workflow**; the installers appear as downloadable artifacts.
+
+To publish, bump `config/version` in `project.godot`, commit, then tag and push:
 
 ```bash
 git tag v0.1.0 && git push origin main --tags
 ```
 
-The release workflow exports all three platforms and attaches them to the
-GitHub release.
+The release workflow exports all three platforms, builds the .deb, .dmg and
+Windows installer (`packaging/`) on their native runners, and attaches them to
+the GitHub release. App icons are generated from `icon.svg` by
+`tools/generate_icons.gd`.
 
 ## Roadmap
 
@@ -139,4 +177,5 @@ GitHub release.
 3. ~~Hot-seat for 1–4 players; stroke, match, skins, foursomes and fourball~~
 4. ~~Network play: host/join over ENet with a lobby, host-authoritative shots,
    computer takeover when a player drops~~
-5. Course editor and seeded "course of the day"; .deb/.dmg/installer packaging
+5. ~~Course editor, course of the day and share codes; .deb/.dmg/Windows
+   installer packaging~~

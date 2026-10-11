@@ -3,7 +3,8 @@ extends Control
 ## The first screen: pick a format and who is playing. The last line-up is
 ## remembered between sessions.
 
-signal start_requested(mode: int, players: Array, holes: int)
+signal start_requested(mode: int, players: Array, holes: int, course: Course)
+signal editor_requested(course: Course)
 signal host_requested(player_name: String)
 signal join_requested(address: String, player_name: String)
 signal quit_requested
@@ -14,6 +15,8 @@ const MAX_PLAYERS := 4
 var _mode: OptionButton
 var _count: OptionButton
 var _holes: OptionButton
+var _course: OptionButton
+var _code: LineEdit
 var _address: LineEdit
 var _status: Label
 var _info: Label
@@ -69,6 +72,22 @@ func _ready() -> void:
 	_holes.add_item("18 holes")
 	_holes.add_item("9 holes")
 	box.add_child(_labelled("Length", _holes))
+	var course_row := HBoxContainer.new()
+	_course = OptionButton.new()
+	_course.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_course.item_selected.connect(func(_i: int) -> void: _code.text = "")
+	course_row.add_child(_course)
+	var edit := Button.new()
+	edit.text = "Edit…"
+	edit.pressed.connect(func() -> void:
+		var c := selected_course()
+		if c:
+			editor_requested.emit(c))
+	course_row.add_child(edit)
+	box.add_child(_labelled("Course", course_row))
+	_code = LineEdit.new()
+	_code.placeholder_text = "or paste a course code (SG-… / SGX-…)"
+	box.add_child(_labelled("", _code))
 
 	for i in MAX_PLAYERS:
 		var row := HBoxContainer.new()
@@ -145,6 +164,47 @@ func _ready() -> void:
 func open(status := "") -> void:
 	visible = true
 	_status.text = status
+	refresh_courses()
+
+
+## Fills the course list: a new random course, today's course, then saved ones.
+func refresh_courses(select_name := "") -> void:
+	var previous := _course.get_item_text(_course.selected) if _course.item_count > 0 else ""
+	if select_name != "":
+		previous = select_name
+	_course.clear()
+	_course.add_item("Random course")
+	_course.add_item(Course.daily().name)
+	for n in Course.list_saved():
+		_course.add_item(n)
+	for i in _course.item_count:
+		if _course.get_item_text(i) == previous:
+			_course.select(i)
+
+
+## Selects a course coming back from the editor: by name if it's saved,
+## otherwise by its share code.
+func use_course(c: Course) -> void:
+	if c.name in Course.list_saved():
+		_code.text = ""
+		refresh_courses(c.name)
+	else:
+		_code.text = c.to_code()
+
+
+## The chosen course, or null (with a message) if the pasted code is bad.
+func selected_course() -> Course:
+	if _code.text.strip_edges() != "":
+		var c := Course.from_code(_code.text)
+		if c == null:
+			_status.text = "That course code isn't valid."
+		return c
+	match _course.selected:
+		0:
+			return Course.new("Random course", randi())
+		1:
+			return Course.daily()
+	return Course.load_saved(_course.get_item_text(_course.selected))
 	_start.grab_focus()
 
 
@@ -200,15 +260,20 @@ func _players(all_cpu: bool) -> Array[Competition.Player]:
 
 
 func _on_start() -> void:
-	_save()
-	visible = false
-	start_requested.emit(_mode.selected, _players(false), _hole_count())
+	_begin(false)
 
 
 func _on_watch() -> void:
+	_begin(true)
+
+
+func _begin(all_cpu: bool) -> void:
+	var c := selected_course()
+	if c == null:
+		return
 	_save()
 	visible = false
-	start_requested.emit(_mode.selected, _players(true), _hole_count())
+	start_requested.emit(_mode.selected, _players(all_cpu), _hole_count(), c)
 
 
 func _on_join() -> void:

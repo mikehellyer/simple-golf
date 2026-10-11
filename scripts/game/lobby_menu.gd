@@ -13,6 +13,9 @@ var _address: Label
 var _players: VBoxContainer
 var _mode: OptionButton
 var _holes: OptionButton
+var _course: OptionButton
+var _course_row: Control
+var _course_name: Label
 var _cpu_kind: OptionButton
 var _host_controls: Array[Control] = []
 var _status: Label
@@ -56,6 +59,12 @@ func _ready() -> void:
 	_holes.add_item("9 holes")
 	_holes.item_selected.connect(func(_i: int) -> void: _push_settings())
 	box.add_child(_row("Length", _holes))
+	_course = OptionButton.new()
+	_course.item_selected.connect(func(_i: int) -> void: _push_settings())
+	_course_row = _row("Course", _course)
+	box.add_child(_course_row)
+	_course_name = Label.new()
+	box.add_child(_course_name)
 
 	var cpu_row := HBoxContainer.new()
 	_cpu_kind = OptionButton.new()
@@ -103,8 +112,27 @@ func open(net: NetSession) -> void:
 	if _net != net:
 		_net = net
 		_net.lobby_changed.connect(_refresh)
+	_course.clear()
+	_course.add_item("Random course")
+	_course.add_item(Course.daily().name)
+	for n in Course.list_saved():
+		_course.add_item(n)
+	var current: Dictionary = _net.settings.get("course", {})
+	for i in _course.item_count:
+		if _course.get_item_text(i) == current.get("name", ""):
+			_course.select(i)
 	visible = true
 	_refresh()
+
+
+func _selected_course() -> Course:
+	match _course.selected:
+		0:
+			return Course.new("Random course", randi())
+		1:
+			return Course.daily()
+	var c := Course.load_saved(_course.get_item_text(_course.selected))
+	return c if c else Course.new("Random course", randi())
 
 
 func _row(text: String, control: Control) -> HBoxContainer:
@@ -143,6 +171,9 @@ func _refresh() -> void:
 		if c is BaseButton:
 			c.disabled = not host
 	_mode.select(_net.settings.mode)
+	_course_row.visible = host
+	_course_name.visible = not host
+	_course_name.text = "Course: %s" % _net.settings.get("course", {}).get("name", "Random course")
 	_holes.select(0 if _net.settings.holes == 18 else 1)
 
 	for child in _players.get_children():
@@ -176,6 +207,9 @@ func _push_settings() -> void:
 	var s := _net.settings.duplicate(true)
 	s.mode = _mode.selected
 	s.holes = 18 if _holes.selected == 0 else 9
+	var current: Dictionary = s.get("course", {})
+	if current.get("name", "") != _course.get_item_text(_course.selected):
+		s.course = _selected_course().to_dict()
 	_net.set_settings(s)
 
 

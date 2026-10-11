@@ -14,11 +14,12 @@ extends Node3D
 ## U opens the download page when an update exists.
 ##
 ## Command-line options (after `--`): --demo watches a computer fourball;
+## --editor opens the course editor;
 ## --host / --join=ADDR / --name=NAME / --autoplay / --auto-start=N /
 ## --mode=N / --holes=N / --cpus=K,K / --quit-at-end / --net-log are used by
 ## the automated network test.
 
-enum State { MENU, LOBBY, FLYBY, AIM, SWING, FLIGHT, RESULT, HOLE_DONE, ROUND_DONE }
+enum State { MENU, LOBBY, EDITOR, FLYBY, AIM, SWING, FLIGHT, RESULT, HOLE_DONE, ROUND_DONE }
 
 const YARDS := 1.09361
 const FEET := 3.28084
@@ -50,7 +51,7 @@ class Ball:
 	var map_marker: MeshInstance3D
 
 
-var round_seed := 0
+var course: Course
 var comp: Competition
 var hole: Hole
 var club := Clubs.DRIVER
@@ -72,6 +73,7 @@ var _view: CourseView
 var _hud: Hud
 var _menu: SetupMenu
 var _lobby: LobbyMenu
+var _editor: CourseEditor
 var _sfx: Sfx
 var _camera: Camera3D
 var _map_camera: Camera3D
@@ -141,10 +143,24 @@ func _ready() -> void:
 		_net.leave()
 		_show_menu())
 	menu_layer.add_child(_lobby)
+	_editor = CourseEditor.new()
+	_editor.visible = false
+	_editor.preview_requested.connect(func(h: Hole) -> void:
+		_show_hole(h)
+		_setup_map_camera(true))
+	_editor.closed.connect(func() -> void: _show_menu())
+	_editor.play_requested.connect(func(c: Course) -> void:
+		_show_menu()
+		_menu.use_course(c))
+	_menu.editor_requested.connect(_show_editor)
+	menu_layer.add_child(_editor)
 	Updater.update_available.connect(_on_update_available)
 
 	if _demo:
 		_start_demo()
+	elif "--editor" in _args:
+		_show_menu()
+		_show_editor(Course.new("My course", 42))
 	elif "--host" in _args:
 		_show_menu()
 		_on_host_requested(_arg("name", "Host"))
@@ -171,6 +187,8 @@ func _show_menu(status := "") -> void:
 	_set_state(State.MENU)
 	_hud.visible = false
 	_lobby.visible = false
+	_editor.visible = false
+	_camera.make_current()
 	_clear_balls()
 	_show_hole(Hole.new(_rng.randi_range(1, 18), _rng.randi()))
 	_menu.open(status)
@@ -186,19 +204,28 @@ func _show_lobby() -> void:
 	_lobby.open(_net)
 
 
+func _show_editor(c: Course) -> void:
+	_set_state(State.EDITOR)
+	_menu.visible = false
+	_hud.visible = false
+	_clear_balls()
+	_map_camera.make_current()
+	_editor.open(c)
+
+
 func _start_demo() -> void:
 	var players: Array[Competition.Player] = []
 	var names := ["Ada", "Bobby", "Cleo", "Dev"]
 	for i in 4:
 		var kind := Competition.Kind.CPU_HARD if i % 2 == 0 else Competition.Kind.CPU_MEDIUM
 		players.append(Competition.Player.new(names[i], kind, Competition.COLOURS[i]))
-	_start_round(Competition.Mode.FOURBALL, players, 18)
+	_start_round(Competition.Mode.FOURBALL, players, 18, Course.new("Random course", _rng.randi()))
 
 
-func _on_menu_start(mode: int, players: Array, holes: int) -> void:
+func _on_menu_start(mode: int, players: Array, holes: int, c: Course) -> void:
 	var typed: Array[Competition.Player] = []
 	typed.assign(players)
-	_start_round(mode as Competition.Mode, typed, holes)
+	_start_round(mode as Competition.Mode, typed, holes, c)
 
 
 func _on_host_requested(player_name: String) -> void:
@@ -208,6 +235,7 @@ func _on_host_requested(player_name: String) -> void:
 		return
 	var s := _net.settings.duplicate(true)
 	s.mode = _arg("mode", "0").to_int()
+	s.course = Course.new("Random course", _rng.randi()).to_dict()
 	s.holes = _arg("holes", "18").to_int()
 	s.cpus = []
 	for k in _arg("cpus", "").split(",", false):
@@ -233,7 +261,8 @@ func _on_lobby_start() -> void:
 	var line_up := _net.line_up()
 	if not line_up.size() in Competition.PLAYER_COUNTS[_net.settings.mode]:
 		return
-	_start_round(_net.settings.mode, line_up, _net.settings.holes)
+	_start_round(_net.settings.mode, line_up, _net.settings.holes,
+			Course.from_dict(_net.settings.get("course", {})))
 
 
 ## Automated test: the host tees off once enough players have joined.
@@ -269,17 +298,17 @@ func _is_local(p: Competition.Player) -> bool:
 
 
 @rpc("authority", "call_local", "reliable")
-func net_start_round(mode: int, player_dicts: Array, seed_value: int, holes: int) -> void:
+func net_start_round(mode: int, player_dicts: Array, course_dict: Dictionary, holes: int) -> void:
 	var players: Array[Competition.Player] = []
 	for d in player_dicts:
 		players.append(Competition.Player.from_dict(d))
-	round_seed = seed_value
-	_hole_total = holes
+	course = Course.from_dict(course_dict)
+	_hole_total = clampi(holes, 1, Course.MAX_HOLES)
 	_holes.clear()
 	var pars := PackedInt32Array()
 	var yards := PackedInt32Array()
 	for n in range(1, _hole_total + 1):
-		var h := Hole.new(n, _hole_seed(n))
+		var h := course.make_hole(n)
 		_holes.append(h)
 		pars.append(h.par)
 		yards.append(roundi(h.yardage() * YARDS))
@@ -410,13 +439,12 @@ func net_player_dropped(player_index: int) -> void:
 
 # --- Round flow (host) -----------------------------------------------------
 
-func _start_round(mode: Competition.Mode, players: Array[Competition.Player], holes: int) -> void:
+func _start_round(mode: Competition.Mode, players: Array[Competition.Player], holes: int, c: Course) -> void:
 	var dicts := players.map(func(p: Competition.Player) -> Dictionary: return p.to_dict())
-	var seed_value := _rng.randi()
 	if _online():
-		net_start_round.rpc(mode, dicts, seed_value, holes)
+		net_start_round.rpc(mode, dicts, c.to_dict(), holes)
 	else:
-		net_start_round(mode, dicts, seed_value, holes)
+		net_start_round(mode, dicts, c.to_dict(), holes)
 
 
 ## Host: picks the next ball (honour order on the tee, then farthest from
@@ -502,10 +530,6 @@ func _resolve(r: BallPhysics.Result, b: Ball, shot_club: int) -> Dictionary:
 
 # --- Hole and turn flow (everyone) -----------------------------------------
 
-func _hole_seed(number: int) -> int:
-	return round_seed * 31 + number * 7919
-
-
 func _show_hole(h: Hole) -> void:
 	if _view:
 		_view.queue_free()
@@ -519,7 +543,7 @@ func _show_hole(h: Hole) -> void:
 func _start_hole(number: int) -> void:
 	_show_hole(_holes[number - 1])
 	var rng := RandomNumberGenerator.new()
-	rng.seed = _hole_seed(number) + 99
+	rng.seed = course.hole_seed(number) + 99
 	var wind_angle := rng.randf() * TAU
 	wind = Vector3(sin(wind_angle), 0.0, cos(wind_angle)) * rng.randf_range(0.0, MAX_WIND)
 	_sfx.set_ambience(wind.length())
@@ -649,6 +673,8 @@ func _show_card(headline: String, current_hole: int) -> void:
 				if c.holes_played() > 0 else "No holes completed yet"
 	if comp.is_match():
 		footer = "Match row: %s's standing after each hole" % comp.side_name(0)
+	if current_hole == 0 or headline == "Scorecard":
+		footer += "\n%s  ·  code %s" % [course.name, course.to_code().left(40)]
 	_hud.scorecard.show_cards(comp.cards, current_hole, headline, footer, rows)
 
 
@@ -698,7 +724,7 @@ func _set_state(s: State) -> void:
 # --- Input -----------------------------------------------------------------
 
 func _unhandled_input(event: InputEvent) -> void:
-	if state == State.MENU or state == State.LOBBY:
+	if state in [State.MENU, State.LOBBY, State.EDITOR]:
 		return
 	if event is InputEventMouseButton:
 		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
@@ -1028,10 +1054,13 @@ func _move_camera(delta: float) -> void:
 		_camera.look_at(_look_now)
 
 
-func _setup_map_camera() -> void:
+func _setup_map_camera(editor := false) -> void:
 	var c := hole.bounds.get_center()
 	_map_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	_map_camera.size = hole.bounds.size.y + 30.0
+	# In the editor, slide the view right so the hole sits beside the panel.
+	var view := get_viewport().get_visible_rect().size
+	_map_camera.h_offset = -_map_camera.size * view.x / view.y * 0.15 if editor else 0.0
 	_map_camera.far = 1000.0
 	# Looking straight down with +Z towards the top of the screen.
 	_map_camera.transform = Transform3D(Basis.looking_at(Vector3.DOWN, Vector3(0.0, 0.0, 1.0)),

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Simple-Golf
+GenericName=Golf Game
+Comment=A modern re-imagining of MicroProse Golf
+Exec=simple-golf
+Icon=simple-golf
+Terminal=false
+Categories=Game;SportsGame;
+Keywords=golf;sport;multiplayer;
