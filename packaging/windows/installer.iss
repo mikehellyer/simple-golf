@@ -1,9 +1,10 @@
 ; Inno Setup script for Simple-Golf.
 ; Built with: iscc packaging\windows\installer.iss
-; Expects build\windows\Simple-Golf.exe (Godot export, game data embedded)
-; to already exist, and the version passed in via /DAppVersion=x.y.z (the
-; release workflow does this so the .iss file never has to be hand-edited
-; per release).
+; Expects build\windows\Simple-Golf.exe and Simple-Golf.pck (Godot export;
+; the game data is kept in a separate .pck because antivirus tools are more
+; likely to flag executables with data embedded) to already exist, and the
+; version passed in via /DAppVersion=x.y.z (the release workflow does this so
+; the .iss file never has to be hand-edited per release).
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -17,6 +18,14 @@ AppId={{B3E1F2A4-5C6D-4E7F-8A9B-0C1D2E3F4A5B}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=Mike Hellyer
+AppPublisherURL=https://github.com/mikehellyer/simple-golf
+AppSupportURL=https://github.com/mikehellyer/simple-golf/issues
+AppUpdatesURL=https://github.com/mikehellyer/simple-golf/releases
+VersionInfoVersion={#AppVersion}
+VersionInfoCompany=Mike Hellyer
+VersionInfoDescription=Simple-Golf installer
+VersionInfoProductName=Simple-Golf
+VersionInfoCopyright=Copyright 2026 Mike Hellyer
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 UninstallDisplayIcon={app}\icon.ico
@@ -35,6 +44,7 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 
 [Files]
 Source: "{#RepoRoot}\build\windows\Simple-Golf.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#RepoRoot}\build\windows\Simple-Golf.pck"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#RepoRoot}\packaging\icons\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

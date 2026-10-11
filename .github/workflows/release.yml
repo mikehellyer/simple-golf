@@ -98,7 +98,7 @@ jobs:
           $version = (Select-String -Path project.godot -Pattern '^config/version="(.*)"').Matches[0].Groups[1].Value
           New-Item -ItemType Directory -Force dist | Out-Null
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" "packaging\windows\installer.iss"
-          Compress-Archive -Path build\windows\Simple-Golf.exe -DestinationPath "dist\Simple-Golf-$version-Windows-portable.zip"
+          Compress-Archive -Path build\windows\Simple-Golf.exe, build\windows\Simple-Golf.pck -DestinationPath "dist\Simple-Golf-$version-Windows-portable.zip"
 
       - uses: actions/upload-artifact@v5
         with:
