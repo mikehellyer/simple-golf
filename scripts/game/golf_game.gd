@@ -45,6 +45,8 @@ class Ball:
 	var index := 0
 	var pos := Vector3.ZERO
 	var lie := Surface.TEE
+	## How the ball is sitting (a Lie value).
+	var quality := Lie.GOOD
 	var strokes := 0
 	## Swings actually taken (penalty strokes excluded), for foursomes turns.
 	var swings := 0
@@ -109,6 +111,10 @@ var _swung_locally := false
 ## stance, and where on the tee box the ball is teed (tee_x, metres).
 var _setup := {tee_height = 1, ball_position = 0, tee_x = 0.0}
 var _pending_setup := {}
+## Each player's chosen view of the ball in flight (an index into
+## ShotPanel.CAMERAS), as in the original's five camera positions.
+var _camera_choice := {}
+var _side_cam := Vector3.ZERO
 ## Host: a shot for this turn has been decided and sent; don't decide again.
 var _decided := false
 ## Host: peers that have finished watching the current shot.
@@ -158,6 +164,7 @@ func _ready() -> void:
 	_hud.shot_panel.tee_height_pressed.connect(_cycle_tee_height)
 	_hud.shot_panel.ball_position_pressed.connect(_cycle_ball_position)
 	_hud.shot_panel.tee_move_pressed.connect(_move_on_tee)
+	_hud.shot_panel.camera_pressed.connect(_cycle_camera)
 	_hud.meter.clicked.connect(func() -> void: _sfx.play("tick", -6.0))
 	_sfx = Sfx.new()
 	add_child(_sfx)
@@ -590,6 +597,9 @@ func _decide_shot(ball_index: int, shot_club: int, shot_heading: float, power: f
 	_decided = true
 	var b := _balls[ball_index]
 	_apply_tee_spot(b, setup)
+	# The host's own record of the lie counts, whatever a client sent.
+	setup = setup.duplicate()
+	setup.lie_quality = b.quality
 	var launch := Clubs.launch_for(shot_club, b.pos, shot_heading, power, accuracy, b.lie,
 			Aim.putt_speed(Aim.flat_distance(b.pos, hole.pin)), setup)
 	var result := BallPhysics.simulate(launch, hole, wind)
@@ -622,7 +632,7 @@ func _apply_tee_spot(b: Ball, setup: Dictionary) -> void:
 
 ## Where the ball ends up after a shot, with penalties applied.
 func _resolve(r: BallPhysics.Result, b: Ball, shot_club: int) -> Dictionary:
-	var out := {pos = b.pos, lie = b.lie, strokes = b.strokes + 1, done = false, outcome = r.outcome}
+	var out := {pos = b.pos, lie = b.lie, quality = b.quality, strokes = b.strokes + 1, done = false, outcome = r.outcome}
 	var msg := ""
 	match r.outcome:
 		BallPhysics.Outcome.HOLED:
@@ -645,6 +655,13 @@ func _resolve(r: BallPhysics.Result, b: Ball, shot_club: int) -> Dictionary:
 			elif lie == Surface.GREEN:
 				msg = "%d ft to go" % ceili(Aim.flat_distance(r.rest, hole.pin) * FEET)
 	out.lie = hole.surface_at(out.pos.x, out.pos.z) if r.outcome != BallPhysics.Outcome.HOLED else Surface.GREEN
+	match r.outcome:
+		BallPhysics.Outcome.REST:
+			out.quality = Lie.judge(out.lie, out.pos, r)
+			if out.quality in [Lie.FLUFFY, Lie.VERY_POOR, Lie.DIVOT, Lie.SAND_POOR, Lie.PLUGGED]:
+				msg += "\n%s lie" % Lie.NAMES[out.quality] if out.quality != Lie.PLUGGED else "\nPlugged!"
+		BallPhysics.Outcome.WATER:
+			out.quality = Lie.default_for(out.lie)
 	if not out.done and out.strokes >= MAX_STROKES:
 		out.done = true
 		msg += "\nPicked up"
@@ -745,6 +762,7 @@ func _launch() -> void:
 	_event_index = 0
 	_playback = 0.0
 	_landing_cam = false
+	_side_cam = Vector3.ZERO
 	_set_state(State.FLIGHT)
 
 
@@ -757,6 +775,7 @@ func _finish_shot() -> void:
 	_track_stats(r)
 	_ball.pos = r.pos
 	_ball.lie = r.lie
+	_ball.quality = int(r.get("quality", Lie.default_for(r.lie)))
 	_ball.strokes = r.strokes
 	_ball.done = r.done
 	_ball.mesh.position = _ball.pos
@@ -925,7 +944,7 @@ func _set_state(s: State) -> void:
 		State.AIM:
 			_hud.meter.reset()
 			if mine:
-				_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  SWING button or Space  ·  T tee  ·  B ball position  ·  [ ] move on tee  ·  M map  ·  Tab card")
+				_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  SWING or Space  ·  T tee  ·  B ball  ·  [ ] move on tee  ·  C view  ·  M map  ·  Tab card")
 			elif _hitter.is_cpu():
 				_hud.set_hint("%s is thinking…" % _hitter.name)
 			else:
@@ -964,6 +983,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	match event.keycode:
 		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
 			_action()
+		KEY_C:
+			_cycle_camera()
 		KEY_T:
 			_cycle_tee_height()
 		KEY_B:
@@ -1067,13 +1088,26 @@ func _no_humans_here() -> bool:
 
 func _update_shot_panel() -> void:
 	_hud.shot_panel.show_for(_on_tee_box(_ball), club == Clubs.PUTTER, int(_setup.tee_height),
-			int(_setup.ball_position))
+			int(_setup.ball_position), _camera_view())
 
 
 ## The SWING button: the same as pressing Space.
 func _swing_pressed() -> void:
 	if state == State.AIM or state == State.SWING:
 		_action()
+
+
+## The flight view for whoever is playing: TV (1) unless they've chosen another.
+func _camera_view() -> int:
+	return int(_camera_choice.get(_hitter.name if _hitter else "", 1))
+
+
+func _cycle_camera() -> void:
+	if _hitter == null or not _is_local(_hitter) or state == State.FLIGHT:
+		return
+	_camera_choice[_hitter.name] = (_camera_view() + 1) % ShotPanel.CAMERAS.size()
+	_update_shot_panel()
+	_hud.show_message("View: %s" % ShotPanel.CAMERAS[_camera_view()])
 
 
 func _cycle_tee_height() -> void:
@@ -1180,7 +1214,7 @@ func _process(delta: float) -> void:
 func _cpu_turn() -> void:
 	if _cpu_plan == null:
 		if state_time > CPU_AIM_TIME:
-			_cpu_plan = CpuPlayer.plan(hole, _ball.pos, _ball.lie, wind, _hitter.skill(), _rng)
+			_cpu_plan = CpuPlayer.plan(hole, _ball.pos, _ball.lie, wind, _hitter.skill(), _rng, _ball.quality)
 			club = _cpu_plan.club
 			heading = _cpu_plan.heading
 			_aim_sent_at = -1.0
@@ -1302,6 +1336,10 @@ func _aim_camera() -> void:
 func _flight_camera() -> void:
 	var p := _ball.mesh.position
 	_cam_look = p
+	var view := _camera_view()
+	if club != Clubs.PUTTER and _shot.carry >= 45.0 and view != 1:
+		_other_flight_camera(view, p)
+		return
 	if club == Clubs.PUTTER or _shot.carry < 45.0:
 		var dir := _flat(p - _shot_start).normalized() if _flat(p - _shot_start).length() > 0.5 else _dir(heading)
 		_cam_target = p - dir * 5.0 + Vector3.UP * 2.0
@@ -1322,6 +1360,36 @@ func _flight_camera() -> void:
 				cam.y = maxf(cam.y, t.y + t.w * 3.5)
 		_camera.position = cam
 		_cam_target = cam
+
+
+## The other four views of a full shot (TV is the default above).
+func _other_flight_camera(view: int, p: Vector3) -> void:
+	var dir := _flat(_shot.rest - _shot_start).normalized()
+	if dir.length() < 0.1:
+		dir = _dir(heading)
+	var side := dir.cross(Vector3.UP)
+	match view:
+		0:  # Behind: chase the ball from behind and above.
+			_cam_target = p - dir * 14.0 + Vector3.UP * 5.0
+		2:  # Side: a fixed spot beside the middle of the shot, panning with the ball.
+			if _playback < 0.05 or _side_cam == Vector3.ZERO:
+				var mid := _shot_start.lerp(_shot.rest, 0.55)
+				_side_cam = mid + side * (22.0 + _shot.carry * 0.12) + Vector3.UP * 7.0
+				_side_cam.y = maxf(_side_cam.y, hole.height_at(_side_cam.x, _side_cam.z) + 6.0)
+				_camera.position = _side_cam
+			_cam_target = _side_cam
+		3:  # Green: from beyond where the ball finishes, watching it come in.
+			var cam := _shot.rest + dir * 35.0 - side * 8.0 + Vector3.UP * 7.0
+			cam.y = maxf(cam.y, hole.height_at(cam.x, cam.z) + 4.0)
+			if _playback < 0.05:
+				_camera.position = cam
+			_cam_target = cam
+		4:  # Overhead: high above, following the ball.
+			_cam_target = p - dir * 25.0 + Vector3.UP * 70.0
+	_cam_target.y = maxf(_cam_target.y, hole.height_at(_cam_target.x, _cam_target.z) + 2.0)
+	# These views never use the TV landing cut, so keep the ring meter visible
+	# only until the ball is away.
+	_landing_cam = _playback > 0.6
 
 
 func _flyby_camera() -> void:
@@ -1436,7 +1504,11 @@ func _update_hud() -> void:
 		lines.append("To pin: %d ft" % ceili(dist * FEET))
 	else:
 		lines.append("To pin: %d yds" % roundi(dist * YARDS))
-	lines.append("Lie: %s" % Surface.NAMES[_ball.lie])
+	var lie_text: String = Surface.NAMES[_ball.lie]
+	if _ball.quality != Lie.default_for(_ball.lie) or _ball.lie in [Surface.ROUGH, Surface.BUNKER]:
+		lie_text += " (%s)" % Lie.NAMES[_ball.quality].to_lower()
+	lines.append("Lie: %s" % lie_text)
+	_hud.set_lie(_ball.lie, _ball.quality)
 	if club == Clubs.PUTTER:
 		var full := _putt_speed * _putt_speed / (2.0 * Surface.ROLL_DECEL[Surface.GREEN])
 		lines.append("Club: Putter  (100%% ≈ %d ft)" % roundi(full * FEET))

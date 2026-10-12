@@ -8,6 +8,9 @@ signal swing_pressed
 signal tee_height_pressed
 signal ball_position_pressed
 signal tee_move_pressed(direction: int)
+signal camera_pressed
+
+const CAMERAS := ["Behind", "TV", "Side", "Green", "Overhead"]
 
 
 ## A button that draws its own little picture above its caption.
@@ -44,6 +47,15 @@ class IconButton:
 				draw_line(Vector2(c.x, ground + 8.0), Vector2(c.x, peg_top), Color(0.95, 0.85, 0.6), 3.0)
 				draw_line(Vector2(c.x - 4, peg_top), Vector2(c.x + 4, peg_top), Color(0.95, 0.85, 0.6), 2.0)
 				draw_circle(Vector2(c.x, peg_top - 6.0), 6.0, ink)
+			"camera":
+				# A film camera on a tripod, with the view number.
+				draw_rect(Rect2(c + Vector2(-16, -20), Vector2(26, 16)), ink)
+				draw_colored_polygon(PackedVector2Array([c + Vector2(10, -16), c + Vector2(20, -22),
+						c + Vector2(20, -2), c + Vector2(10, -8)]), ink)
+				for leg in [-10.0, 0.0, 10.0]:
+					draw_line(c + Vector2(-3, -4), c + Vector2(leg - 3, 14), ink, 2.0)
+				draw_string(get_theme_default_font(), c + Vector2(-13, -7), str(value + 1),
+						HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.BLACK)
 			"stance":
 				# Two feet seen from above, with the ball back, centre or forward
 				# (the target is to the left, as for a right-handed golfer).
@@ -61,6 +73,7 @@ class IconButton:
 var _swing: IconButton
 var _tee: IconButton
 var _stance: IconButton
+var _camera: IconButton
 var _move: HBoxContainer
 
 
@@ -78,6 +91,10 @@ func _ready() -> void:
 	_stance.pressed.connect(func() -> void: ball_position_pressed.emit())
 	_style(_stance, Color(0.05, 0.1, 0.06, 0.82), 10)
 	add_child(_stance)
+	_camera = IconButton.new("camera", Vector2(108, 72))
+	_camera.pressed.connect(func() -> void: camera_pressed.emit())
+	_style(_camera, Color(0.05, 0.1, 0.06, 0.82), 10)
+	add_child(_camera)
 	_move = HBoxContainer.new()
 	_move.add_theme_constant_override("separation", 4)
 	for d in [-1, 1]:
@@ -93,8 +110,12 @@ func _ready() -> void:
 
 
 ## Shows the controls that apply to this shot.
-func show_for(on_tee: bool, putting: bool, tee_height: int, ball_position: int) -> void:
+func show_for(on_tee: bool, putting: bool, tee_height: int, ball_position: int, camera := 1) -> void:
 	visible = true
+	_camera.visible = not putting
+	_camera.value = camera
+	_camera.caption = "View: %s" % CAMERAS[camera]
+	_camera.queue_redraw()
 	_tee.visible = on_tee and not putting
 	_move.visible = on_tee
 	_stance.visible = not putting

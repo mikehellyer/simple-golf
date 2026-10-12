@@ -20,7 +20,52 @@ class WindArrow:
 		draw_colored_polygon(PackedVector2Array([c + d, c + d * 0.3 + side, c + d * 0.3 - side]), Color.WHITE)
 
 
+## How the ball is sitting, as in MicroProse Golf's lie icon.
+class LieIcon:
+	extends Control
+	var surface := Surface.TEE
+	var quality := Lie.GOOD
+
+	func _init() -> void:
+		custom_minimum_size = Vector2(74, 74)
+		mouse_filter = Control.MOUSE_FILTER_PASS
+
+	func _draw() -> void:
+		var r := Rect2(Vector2.ZERO, size)
+		draw_rect(r, Color(0.55, 0.75, 0.95))
+		var sand := quality in [Lie.SAND_GOOD, Lie.SAND_POOR, Lie.PLUGGED]
+		var ground_y := size.y * 0.62
+		var ground := Color(0.86, 0.79, 0.58) if sand else Color(0.3, 0.6, 0.22)
+		draw_rect(Rect2(0, ground_y, size.x, size.y - ground_y), ground)
+		var c := Vector2(size.x * 0.5, ground_y)
+		var ball_r := size.x * 0.17
+		# How far the ball sits above (+) or below (-) the surface, in radii.
+		var sit: float = {Lie.GOOD: 0.9, Lie.FLUFFY: 1.6, Lie.POOR: 0.4, Lie.VERY_POOR: -0.2, Lie.DIVOT: 0.1,
+				Lie.SAND_GOOD: 0.8, Lie.SAND_POOR: 0.2, Lie.PLUGGED: -0.55}.get(quality, 0.9)
+		if quality == Lie.DIVOT:
+			draw_rect(Rect2(c.x - ball_r * 2.2, ground_y, ball_r * 4.4, ball_r * 0.9), Color(0.45, 0.33, 0.2))
+		if quality == Lie.PLUGGED:
+			draw_arc(c, ball_r * 1.7, PI, TAU, 16, Color(0.7, 0.62, 0.42), 3.0)
+		var centre := c - Vector2(0, ball_r * sit)
+		if surface == Surface.TEE and quality == Lie.GOOD:
+			draw_line(c + Vector2(0, 6), centre + Vector2(0, ball_r), Color(0.95, 0.85, 0.6), 3.0)
+		draw_circle(centre, ball_r, Color.WHITE)
+		draw_circle(centre + Vector2(-ball_r * 0.3, -ball_r * 0.3), ball_r * 0.25, Color(1, 1, 1, 0.6))
+		# Grass blades in front of the ball for rough lies; sand covering a sunk ball.
+		var blades: float = {Lie.FLUFFY: 0.9, Lie.POOR: 1.2, Lie.VERY_POOR: 2.0}.get(quality, 0.25 if not sand else 0.0)
+		if blades > 0.0:
+			for i in 11:
+				var x := float(i) / 10.0 * size.x
+				var h: float = ball_r * blades * (0.7 + 0.3 * sin(i * 2.3))
+				draw_line(Vector2(x, ground_y + 2), Vector2(x + 3, ground_y - h), Color(0.18, 0.45, 0.14), 2.0)
+		if sand and sit < 0.5:
+			draw_rect(Rect2(0, ground_y, size.x, size.y - ground_y), ground)
+		draw_rect(r, Color(1, 1, 1, 0.5), false, 1.5)
+
+
 var meter: SwingMeter
+var _lie_icon: LieIcon
+var _lie_label: Label
 var shot_panel: ShotPanel
 var scorecard: ScorecardView
 var _player_label: Label
@@ -47,7 +92,17 @@ func _ready() -> void:
 	_shot_label = _label(16)
 	box.add_child(_player_label)
 	box.add_child(_hole_label)
+	var lie_row := HBoxContainer.new()
+	lie_row.add_theme_constant_override("separation", 10)
+	_lie_icon = LieIcon.new()
+	lie_row.add_child(_lie_icon)
+	_lie_label = _label(14)
+	_lie_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lie_label.custom_minimum_size = Vector2(170, 0)
+	_lie_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	lie_row.add_child(_lie_label)
 	box.add_child(_shot_label)
+	box.add_child(lie_row)
 
 	_wind = WindArrow.new()
 	_wind.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -134,6 +189,14 @@ func set_standings(lines: PackedStringArray) -> void:
 func _process(_delta: float) -> void:
 	if shot_panel.visible:
 		shot_panel.set_phase(meter.phase)
+
+
+func set_lie(surface: int, quality: int) -> void:
+	_lie_icon.surface = surface
+	_lie_icon.quality = quality
+	_lie_icon.queue_redraw()
+	_lie_label.text = "%s lie\n%s" % [Lie.NAMES[quality], Lie.HINTS[quality]]
+	_lie_icon.get_parent().visible = surface != Surface.GREEN
 
 
 func set_hole_info(text: String) -> void:

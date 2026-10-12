@@ -25,8 +25,9 @@ class Plan:
 
 
 static func plan(hole: Hole, from: Vector3, lie: int, wind: Vector3, skill: Skill,
-		rng: RandomNumberGenerator) -> Plan:
+		rng: RandomNumberGenerator, quality := -1) -> Plan:
 	var p := Plan.new()
+	var setup := {} if quality < 0 else {lie_quality = quality}
 	var dist := Aim.flat_distance(from, hole.pin)
 	p.club = Aim.pick_club(dist, lie)
 	var putt_speed := Aim.putt_speed(dist)
@@ -47,7 +48,7 @@ static func plan(hole: Hole, from: Vector3, lie: int, wind: Vector3, skill: Skil
 		var hi := 1.0
 		for i in 7:
 			var mid := (lo + hi) * 0.5
-			var trial := BallPhysics.simulate(Clubs.launch_for(p.club, from, base, mid, 0.0, lie, putt_speed), hole, wind)
+			var trial := BallPhysics.simulate(Clubs.launch_for(p.club, from, base, mid, 0.0, lie, putt_speed, setup), hole, wind)
 			if Aim.flat_distance(from, trial.rest) < want:
 				lo = mid
 			else:
@@ -59,14 +60,14 @@ static func plan(hole: Hole, from: Vector3, lie: int, wind: Vector3, skill: Skil
 		powers = [1.0]
 
 	var power: float = powers[powers.size() / 2]
-	var heading := _best_heading(hole, from, lie, wind, p.club, base, step, power, putt_speed, target)
+	var heading := _best_heading(hole, from, lie, wind, p.club, base, step, power, putt_speed, target, setup)
 	var best_cost := INF
 	for pw in powers:
-		var c := _cost(hole, from, lie, wind, p.club, heading, pw, putt_speed, target)
+		var c := _cost(hole, from, lie, wind, p.club, heading, pw, putt_speed, target, setup)
 		if c < best_cost:
 			best_cost = c
 			power = pw
-	heading = _best_heading(hole, from, lie, wind, p.club, heading, step * 0.5, power, putt_speed, target)
+	heading = _best_heading(hole, from, lie, wind, p.club, heading, step * 0.5, power, putt_speed, target, setup)
 
 	# Now play like a person: misread putts a little, and mistime the meter.
 	p.heading = heading
@@ -81,12 +82,12 @@ static func plan(hole: Hole, from: Vector3, lie: int, wind: Vector3, skill: Skil
 
 
 static func _best_heading(hole: Hole, from: Vector3, lie: int, wind: Vector3, club: int,
-		centre: float, step: float, power: float, putt_speed: float, target: Vector3) -> float:
+		centre: float, step: float, power: float, putt_speed: float, target: Vector3, setup := {}) -> float:
 	var best := centre
 	var best_cost := INF
 	for k in range(-4, 5):
 		var h := centre + k * step
-		var c := _cost(hole, from, lie, wind, club, h, power, putt_speed, target)
+		var c := _cost(hole, from, lie, wind, club, h, power, putt_speed, target, setup)
 		if c < best_cost:
 			best_cost = c
 			best = h
@@ -94,8 +95,8 @@ static func _best_heading(hole: Hole, from: Vector3, lie: int, wind: Vector3, cl
 
 
 static func _cost(hole: Hole, from: Vector3, lie: int, wind: Vector3, club: int,
-		heading: float, power: float, putt_speed: float, target: Vector3) -> float:
-	var launch := Clubs.launch_for(club, from, heading, power, 0.0, lie, putt_speed)
+		heading: float, power: float, putt_speed: float, target: Vector3, setup := {}) -> float:
+	var launch := Clubs.launch_for(club, from, heading, power, 0.0, lie, putt_speed, setup)
 	var r := BallPhysics.simulate(launch, hole, wind)
 	match r.outcome:
 		BallPhysics.Outcome.HOLED:

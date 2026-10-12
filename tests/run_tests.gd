@@ -36,6 +36,7 @@ func _init() -> void:
 	test_shot_setup()
 	test_golfer()
 	test_sweet_spot()
+	test_lies()
 	print("\n%d passed, %d failed" % [_passes, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -563,3 +564,41 @@ func test_sweet_spot() -> void:
 	check(is_equal_approx(SwingMeter._angle(0.0), PI * 0.5) and is_equal_approx(SwingMeter._angle(1.0), PI * 1.5),
 			"the ring runs from 6 o'clock to the check mark at 12")
 	check(SwingMeter._angle(SwingMeter.MAX_VALUE) > SwingMeter._angle(1.0), "overswing carries on past 12 o'clock")
+
+
+func test_lies() -> void:
+	var flat := FlatCourse.new()
+	var shot := func(club: int, surface: int, quality: int) -> BallPhysics.Result:
+		var setup := {lie_quality = quality}
+		return BallPhysics.simulate(Clubs.launch_for(club, Vector3.ZERO, 0.0, 1.0, 0.0, surface, 0.0, setup), flat)
+	var poor: BallPhysics.Result = shot.call(7, Surface.ROUGH, Lie.POOR)
+	var fluffy: BallPhysics.Result = shot.call(7, Surface.ROUGH, Lie.FLUFFY)
+	var very: BallPhysics.Result = shot.call(7, Surface.ROUGH, Lie.VERY_POOR)
+	check(fluffy.carry > poor.carry and poor.carry > very.carry,
+			"rough: fluffy goes furthest, very poor shortest (%.0f / %.0f / %.0f m)" % [fluffy.carry, poor.carry, very.carry])
+	var good: BallPhysics.Result = shot.call(7, Surface.FAIRWAY, Lie.GOOD)
+	var divot: BallPhysics.Result = shot.call(7, Surface.FAIRWAY, Lie.DIVOT)
+	check(divot.carry < good.carry, "a divot costs distance")
+	var sand: BallPhysics.Result = shot.call(Clubs.SAND_WEDGE, Surface.BUNKER, Lie.SAND_GOOD)
+	var plugged: BallPhysics.Result = shot.call(Clubs.SAND_WEDGE, Surface.BUNKER, Lie.PLUGGED)
+	check(plugged.carry < sand.carry * 0.75, "a plugged ball comes out much shorter")
+	check(Lie.default_for(Surface.ROUGH) == Lie.POOR and Lie.default_for(Surface.BUNKER) == Lie.SAND_GOOD
+			and Lie.default_for(Surface.FAIRWAY) == Lie.GOOD, "default lies")
+	# Judging is a pure function of where the ball stopped: every machine agrees.
+	var spot := Vector3(12.345, 0.0, 210.987)
+	check(Lie.judge(Surface.ROUGH, spot, null) == Lie.judge(Surface.ROUGH, spot, null), "lies are judged the same everywhere")
+	var counts := {}
+	for i in 400:
+		var q := Lie.judge(Surface.ROUGH, Vector3(i * 0.37, 0.0, i * 1.13), null)
+		counts[q] = counts.get(q, 0) + 1
+	check(counts.get(Lie.FLUFFY, 0) > 50 and counts.get(Lie.POOR, 0) > 120 and counts.get(Lie.VERY_POOR, 0) > 60,
+			"rough lies vary (%s)" % counts)
+	# A steep, fast landing in a bunker plugs the ball.
+	var bunker := FlatCourse.new()
+	bunker.surface = Surface.BUNKER
+	var lob := BallPhysics.simulate(Clubs.launch_for(Clubs.SAND_WEDGE, Vector3.ZERO, 0.0, 1.0, 0.0, Surface.FAIRWAY, 0.0), bunker)
+	check(Lie.judge(Surface.BUNKER, lob.rest, lob) == Lie.PLUGGED, "a full wedge dropping into sand plugs")
+	var roll := BallPhysics.Launch.new()
+	roll.speed = 3.0
+	var rolled := BallPhysics.simulate(roll, bunker)
+	check(Lie.judge(Surface.BUNKER, rolled.rest, rolled) != Lie.PLUGGED, "a ball rolling into sand doesn't plug")

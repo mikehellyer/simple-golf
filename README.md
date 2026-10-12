@@ -109,6 +109,8 @@ the game.
 | ← / → | Aim (hold Shift for fine aim) |
 | ↑ / ↓ | Change club |
 | Space or left click | Swing: start, set power, set accuracy |
+| C | Flight view: Behind, TV, Side, Green or Overhead (each player keeps their own) |
+| T / B / [ ] | Tee height, ball position in the stance, move the ball along the tee |
 | M | Overhead map |
 | Tab | Scorecard |
 | G | Green slope grid on/off (shown when putting) |
@@ -123,6 +125,11 @@ backswing. The second click sets power; going past 100% into the red adds
 distance but magnifies any timing error. The third click, on the downswing,
 should land on the white line. Clicking early pushes and slices the ball to
 the right; clicking late pulls and hooks it to the left.
+
+**Lies:** as in the original, an icon shows how the ball is sitting:
+good, fluffy (sitting up in the rough: it flies and runs), poor, very poor,
+in a divot, or in the sand (good, poor or plugged after a steep landing).
+Each lie changes the strike.
 
 The ball model includes drag, Magnus lift from backspin and sidespin, wind,
 bounce and spin-bite on landing, and slope-driven roll. Greens run at about

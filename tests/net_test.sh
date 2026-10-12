@@ -11,7 +11,7 @@ set -euo pipefail
 GODOT="${1:-godot}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$(mktemp -d)"
-trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$OUT"' EXIT
+trap 'kill $(jobs -p) 2>/dev/null || true; [ -n "${KEEP_LOGS:-}" ] && cp -r "$OUT" "$KEEP_LOGS"; rm -rf "$OUT"' EXIT
 
 COMMON=(--headless --path "$DIR" --fixed-fps 30)
 ARGS=(--autoplay --net-log --quit-at-end)
@@ -52,7 +52,9 @@ if grep -E 'SCRIPT ERROR|ERROR:' "$OUT/host.log" "$OUT/client.log" | grep -v 'at
 fi
 
 # How often did a machine's own simulation differ from the host's verdict?
-drift=$(grep '^SHOT' "$OUT/client.log" | awk '{
+# Penalty shots (water, out of bounds) are placed by the rules, not where
+# the ball stopped, so only compare shots that came to rest or were holed.
+drift=$(grep -E '^SHOT .*outcome=(0|1) ' "$OUT/client.log" | awk '{
 	split($0, a, "pos="); split(a[2], p, " local="); split(p[1], x, ","); split(p[2], y, ",")
 	d = (x[1]-y[1])^2 + (x[3]-y[3])^2; if (d > 0.0001) n++ } END { print n+0 }')
 

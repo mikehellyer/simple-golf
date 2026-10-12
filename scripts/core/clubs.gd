@@ -88,9 +88,12 @@ static func launch_for(club: int, position: Vector3, heading: float, power: floa
 	return l
 
 
-## Tee height and ball position change how the ball comes off the club.
+## Tee height and ball position change how the ball comes off the club;
+## setup.lie_quality (a Lie value) for how the ball is sitting.
 static func _apply_setup(l: BallPhysics.Launch, club: int, lie: int, setup: Dictionary) -> void:
 	var wood := club <= 2
+	if setup.has("lie_quality"):
+		Lie.apply(l, int(setup.lie_quality))
 	if lie == Surface.TEE:
 		# A risk-or-control choice. Teed high, a wood is caught on the
 		# upswing: a bigger, higher drive (more for the wind to work on) that
