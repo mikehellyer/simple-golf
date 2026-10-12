@@ -31,6 +31,7 @@ func _init() -> void:
 	test_hole_overrides()
 	test_course_codes()
 	test_profiles()
+	test_society_addresses()
 	print("\n%d passed, %d failed" % [_passes, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -419,3 +420,14 @@ func test_profiles() -> void:
 	again.remove(mike.id)
 	check(again.find(mike.id).is_empty(), "members can leave")
 	DirAccess.remove_absolute(file)
+
+
+func test_society_addresses() -> void:
+	check(SocietyClient.normalise_url("golfpi.tail1234.ts.net") == "https://golfpi.tail1234.ts.net",
+			"Tailscale names use https")
+	check(SocietyClient.normalise_url("golfpi.tail1234.ts.net:8443/") == "https://golfpi.tail1234.ts.net:8443",
+			"Funnel's spare port is kept")
+	check(SocietyClient.normalise_url("192.168.1.20:8000") == "http://192.168.1.20:8000",
+			"home network addresses use http")
+	check(SocietyClient.normalise_url("https://fridayfour.duckdns.org") == "https://fridayfour.duckdns.org",
+			"full addresses are left alone")
