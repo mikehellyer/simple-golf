@@ -52,6 +52,8 @@ var ponds: Array[Vector4] = []
 ## x, base y, z, canopy radius
 var trees: Array[Vector4] = []
 var tree_top := 0.0
+## How fast the green runs (an index into Surface.GREEN_SPEEDS).
+var green_speed := Surface.MEDIUM
 ## A real course's lakes, as shapes (empty for generated holes).
 var water_shapes: Array[PackedVector2Array] = []
 
@@ -87,6 +89,7 @@ func _init(hole_number: int, seed_value: int, overrides := {}) -> void:
 	_detail.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	_detail.frequency = 0.05
 	_relief = rng.randf_range(3.0, 9.0)
+	green_speed = _pick_green_speed(seed_value)
 	if overrides.has("__map"):
 		_init_mapped(overrides["__map"], seed_value)
 		return
@@ -158,6 +161,22 @@ func _init_mapped(data: Dictionary, seed_value: int) -> void:
 	_place_pin(_stream(seed_value, 3))
 	_place_mapped_trees(_stream(seed_value, 4))
 	tee = Vector3(0.0, height_at(0.0, 0.0), 0.0)
+
+
+static func _pick_green_speed(seed_value: int) -> int:
+	var roll := _stream(seed_value, 6).randf()
+	if roll < 0.1:
+		return 0
+	if roll < 0.3:
+		return 1
+	if roll < 0.72:
+		return 2
+	return 3 if roll < 0.92 else 4
+
+
+func roll_decel(surf: int) -> float:
+	var d: float = Surface.ROLL_DECEL[surf]
+	return d * Surface.GREEN_SPEED_DECEL[green_speed] if surf == Surface.GREEN else d
 
 
 ## True for a hole on a real, mapped course.

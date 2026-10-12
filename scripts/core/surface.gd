@@ -14,5 +14,11 @@ const FRICTION := [0.45, 0.45, 0.7, 0.45, 0.4, 0.9, 1.0, 1.0]
 const SPIN_GRIP := [0.5, 0.5, 0.15, 0.55, 0.6, 0.1, 0.0, 0.0]
 ## Rolling deceleration in m/s². Green value matches a stimpmeter reading of ~10.
 const ROLL_DECEL := [1.2, 1.3, 4.5, 0.9, 0.56, 10.0, 99.0, 99.0]
+## Green speeds, as in the original: very slow to very fast, as multipliers
+## on the green's rolling deceleration (medium is stimp 10).
+const GREEN_SPEEDS := ["Very slow", "Slow", "Medium", "Fast", "Very fast"]
+const GREEN_SPEED_DECEL := [1.43, 1.18, 1.0, 0.87, 0.77]
+const MEDIUM := 2
+
 ## Ball speed multiplier for a full shot played from this lie.
 const LIE_POWER := [1.0, 1.0, 0.85, 1.0, 1.0, 0.7, 1.0, 1.0]

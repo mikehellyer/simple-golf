@@ -122,6 +122,9 @@ var _iso_turn := 0
 var _iso_aim := Vector3.ZERO
 var _aim_arc: MeshInstance3D
 var _arc_dirty := false
+## Putting green view: looking back from behind the hole (the original's
+## "view from 180°").
+var _view180 := false
 ## Host: a shot for this turn has been decided and sent; don't decide again.
 var _decided := false
 ## Host: peers that have finished watching the current shot.
@@ -173,6 +176,9 @@ func _ready() -> void:
 	_hud.shot_panel.tee_move_pressed.connect(_move_on_tee)
 	_hud.shot_panel.camera_pressed.connect(_cycle_camera)
 	_hud.map_rotate_pressed.connect(_rotate_iso)
+	_hud.shot_panel.view180_pressed.connect(_toggle_view180)
+	_hud.shot_panel.grid_pressed.connect(_toggle_grid)
+	_hud.shot_panel.speed_pressed.connect(_show_green_speed)
 	_hud.map_proceed_pressed.connect(func() -> void: _show_iso(false))
 	_hud.meter.clicked.connect(func() -> void: _sfx.play("tick", -6.0))
 	_sfx = Sfx.new()
@@ -665,7 +671,8 @@ func _resolve(r: BallPhysics.Result, b: Ball, shot_club: int) -> Dictionary:
 			if shot_club != Clubs.PUTTER:
 				msg += "\ncarried %d yds" % roundi(r.carry * YARDS)
 			elif lie == Surface.GREEN:
-				msg = "%d ft to go" % ceili(Aim.flat_distance(r.rest, hole.pin) * FEET)
+				msg = "Rolled %d ft  ·  %d ft to go" % [roundi(Aim.flat_distance(r.rest, b.pos) * FEET),
+						ceili(Aim.flat_distance(r.rest, hole.pin) * FEET)]
 	out.lie = hole.surface_at(out.pos.x, out.pos.z) if r.outcome != BallPhysics.Outcome.HOLED else Surface.GREEN
 	match r.outcome:
 		BallPhysics.Outcome.REST:
@@ -705,6 +712,7 @@ func _show_hole(h: Hole, clubhouse := false) -> void:
 
 
 func _start_hole(number: int) -> void:
+	_hud.show_cup(false)
 	_show_hole(_holes[number - 1])
 	var rng := RandomNumberGenerator.new()
 	rng.seed = course.hole_seed(number) + 99
@@ -739,6 +747,8 @@ func _begin_turn(ball_index: int) -> void:
 	_replaying = false
 	_decided = false
 	_iso_aim = Vector3.ZERO
+	_view180 = false
+	_hud.show_cup(false)
 	_setup = {tee_height = 1, ball_position = 0, tee_x = _ball.pos.x if _on_tee_box(_ball) else 0.0}
 	var dist := Aim.flat_distance(_ball.pos, hole.pin)
 	club = Aim.pick_club(dist, _ball.lie)
@@ -825,6 +835,7 @@ func _records_stats(p: Competition.Player) -> bool:
 
 
 func _hole_complete() -> void:
+	_hud.show_cup(false)
 	var strokes := PackedInt32Array()
 	var best := 999
 	for b in _balls:
@@ -959,7 +970,7 @@ func _set_state(s: State) -> void:
 			_hud.set_hint("Space: skip fly-by" if host else "")
 		State.AIM:
 			_hud.meter.reset()
-			if _iso and mine:
+			if mine:
 				_set_hint_for_state()
 				return
 			if mine:
@@ -1019,6 +1030,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_action()
 		KEY_C:
 			_cycle_camera()
+		KEY_V:
+			_toggle_view180()
 		KEY_T:
 			_cycle_tee_height()
 		KEY_B:
@@ -1055,8 +1068,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				else:
 					_show_card("Scorecard", hole.number)
 		KEY_G:
-			_show_grid = not _show_grid
-			_update_green_grid()
+			_toggle_grid()
 		KEY_N:
 			_hud.show_message("Sound off" if _sfx.toggle_mute() else "Sound on")
 		KEY_ESCAPE:
@@ -1123,7 +1135,38 @@ func _no_humans_here() -> bool:
 
 func _update_shot_panel() -> void:
 	_hud.shot_panel.show_for(_on_tee_box(_ball), club == Clubs.PUTTER, int(_setup.tee_height),
-			int(_setup.ball_position), _camera_view())
+			int(_setup.ball_position), _camera_view(), _near_green())
+
+
+# --- The putting green view ---------------------------------------------------
+
+## Within 30 yards of the green, where the original shows its green icons.
+func _near_green() -> bool:
+	if _ball == null or hole == null:
+		return false
+	return _ball.lie in [Surface.GREEN, Surface.FRINGE] or Aim.flat_distance(_ball.pos, hole.pin) < 30.0 / YARDS
+
+
+func _toggle_view180() -> void:
+	if state != State.AIM or not _near_green():
+		return
+	_view180 = not _view180
+
+
+func _toggle_grid() -> void:
+	_show_grid = not _show_grid
+	_update_green_grid()
+
+
+func _show_green_speed() -> void:
+	var speed := hole.green_speed
+	var change := roundi((1.0 / sqrt(Surface.GREEN_SPEED_DECEL[speed]) - 1.0) * 100.0)
+	var text := "This green is %s." % Surface.GREEN_SPEEDS[speed].to_lower()
+	if change > 0:
+		text += "\nPutts run about %d%% further than on a medium green." % change
+	elif change < 0:
+		text += "\nPutts run about %d%% shorter than on a medium green." % -change
+	_hud.show_message(text)
 
 
 ## The SWING button: the same as pressing Space.
@@ -1251,6 +1294,8 @@ func _update_aim_arc() -> void:
 func _set_hint_for_state() -> void:
 	if _iso and state == State.AIM and _human_controls():
 		_hud.set_hint("Click to aim  ·  right-click: at the flag  ·  ↑/↓ club  ·  Q/E rotate  ·  Space or Proceed: to the shot  ·  M map")
+	elif state == State.AIM and _human_controls() and club == Clubs.PUTTER:
+		_hud.set_hint("←/→ aim (Shift: fine)  ·  SWING or Space: start the putt  ·  V view from the hole  ·  G gridlines  ·  Tab card")
 	elif state == State.AIM and _human_controls():
 		_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  SWING or Space  ·  T tee  ·  B ball  ·  [ ] move on tee  ·  C view  ·  M map  ·  Tab card")
 
@@ -1428,6 +1473,10 @@ func _advance_flight(delta: float) -> void:
 		return
 	_ball.mesh.position = path[i].lerp(path[i + 1], f - i)
 	_play_shot_events()
+	# As a putt nears the hole, a window opens looking straight down on the cup.
+	if club == Clubs.PUTTER and not _hud.cup_view.visible \
+			and Aim.flat_distance(_ball.mesh.position, hole.pin) < 6.0 / FEET:
+		_hud.show_cup(true, hole.pin, heading)
 	if club != Clubs.PUTTER:
 		var mesh: ImmediateMesh = _trail.mesh
 		mesh.clear_surfaces()
@@ -1480,10 +1529,15 @@ func _play_shot_events() -> void:
 
 func _aim_camera() -> void:
 	var dir := _dir(heading)
-	if club == Clubs.PUTTER:
-		# Back and a little to the side, so the golfer doesn't block the line.
-		var side := Vector3(cos(heading), 0.0, -sin(heading))
-		_cam_target = _ball.pos - dir * 3.2 - side * 1.0 + Vector3.UP * 1.5
+	if _view180 and _near_green():
+		# From behind the hole, looking back along the line at the ball.
+		var back := _flat(_ball.pos - hole.pin).normalized()
+		_cam_target = hole.pin - back * 2.5 + Vector3.UP * 1.0
+		_cam_look = _ball.pos
+	elif club == Clubs.PUTTER:
+		# Low, straight down the line: the golfer stands aside while putting,
+		# as in the original, so the whole green can be read.
+		_cam_target = _ball.pos - dir * 2.6 + Vector3.UP * 0.9
 		_cam_look = _ball.pos + dir * 5.0
 	else:
 		# Close behind the golfer, as in the original, so the swing fills the
@@ -1597,7 +1651,11 @@ func _reach() -> float:
 func _place_meter() -> void:
 	var m := _hud.meter
 	m.style = SwingMeter.Style.BAR if club == Clubs.PUTTER else SwingMeter.Style.RING
-	if m.style == SwingMeter.Style.BAR or not _golfer.visible:
+	if m.style == SwingMeter.Style.BAR:
+		# The putting bar only appears once the stroke begins.
+		m.visible = (state == State.SWING or state == State.FLIGHT) and not _iso
+		return
+	if not _golfer.visible:
 		return
 	# Hold the ring still once the ball is away (the camera follows the ball).
 	if state == State.FLIGHT:
@@ -1623,7 +1681,7 @@ func _place_golfer() -> void:
 		return
 	var shirt := _hitter.colour if _hitter else Color.WHITE
 	_golfer.address(_ball.pos, heading, club, int(_setup.ball_position), shirt)
-	_golfer.visible = true
+	_golfer.visible = club != Clubs.PUTTER
 
 
 func _update_aim() -> void:
@@ -1681,6 +1739,8 @@ func _update_hud() -> void:
 	else:
 		lines.append("Club: %s  (carry %d yds)" % [Clubs.club_name(club), roundi(_reach() * YARDS)])
 		_hud.meter.full_label = "100%"
+	if _near_green():
+		lines.append("Green speed: %s" % Surface.GREEN_SPEEDS[hole.green_speed])
 	if club != Clubs.PUTTER:
 		var bits := PackedStringArray()
 		if _on_tee_box(_ball):
@@ -1711,7 +1771,7 @@ func _green_read() -> String:
 
 func _update_green_grid() -> void:
 	if _view:
-		_view.green_grid.visible = _show_grid and club == Clubs.PUTTER \
+		_view.green_grid.visible = _show_grid and _near_green() \
 				and (state == State.AIM or state == State.SWING)
 
 

@@ -53,7 +53,48 @@ func build(hole: Hole) -> void:
 	mm.instance_count = _bases.size()
 	multimesh = mm
 	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_build_lines(hole, r)
 	_update()
+
+
+## The original's gridlines: a 1 m grid draped over the green, so its rolls
+## and tilts show at a glance.
+func _build_lines(hole: Hole, r: float) -> void:
+	var c := hole.green_centre
+	var on_green := func(x: float, z: float) -> bool:
+		var s := hole.surface_at(x, z)
+		return s == Surface.GREEN or s == Surface.FRINGE
+	var mesh := ImmediateMesh.new()
+	const STEP := 0.25
+	for axis in 2:
+		var u := -r
+		while u <= r:
+			var open := false
+			var v := -r
+			while v <= r:
+				var x: float = c.x + (u if axis == 0 else v)
+				var z: float = c.y + (v if axis == 0 else u)
+				if on_green.call(x, z):
+					if not open:
+						mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+						open = true
+					mesh.surface_add_vertex(Vector3(x, hole.height_at(x, z) + 0.02, z))
+				elif open:
+					mesh.surface_end()
+					open = false
+				v += STEP
+			if open:
+				mesh.surface_end()
+			u += SPACING
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(1.0, 1.0, 1.0, 0.45)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var lines := MeshInstance3D.new()
+	lines.mesh = mesh
+	lines.material_override = mat
+	lines.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(lines)
 
 
 func _process(delta: float) -> void:

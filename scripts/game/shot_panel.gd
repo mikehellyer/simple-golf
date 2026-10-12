@@ -9,6 +9,10 @@ signal tee_height_pressed
 signal ball_position_pressed
 signal tee_move_pressed(direction: int)
 signal camera_pressed
+## The original's green icons: view from behind the hole, gridlines, speed.
+signal view180_pressed
+signal grid_pressed
+signal speed_pressed
 
 const CAMERAS := ["Behind", "TV", "Side", "Green", "Overhead"]
 
@@ -56,6 +60,25 @@ class IconButton:
 					draw_line(c + Vector2(-3, -4), c + Vector2(leg - 3, 14), ink, 2.0)
 				draw_string(get_theme_default_font(), c + Vector2(-13, -7), str(value + 1),
 						HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.BLACK)
+			"view180":
+				# A flag with an eye looking back from behind it.
+				draw_line(c + Vector2(-6, 14), c + Vector2(-6, -18), ink, 2.0)
+				draw_colored_polygon(PackedVector2Array([c + Vector2(-6, -18), c + Vector2(10, -13),
+						c + Vector2(-6, -8)]), Color(0.95, 0.25, 0.2))
+				draw_arc(c + Vector2(10, 6), 7.0, PI * 1.15, PI * 1.85, 8, ink, 2.0)
+				draw_arc(c + Vector2(10, 2), 7.0, PI * 0.15, PI * 0.85, 8, ink, 2.0)
+				draw_circle(c + Vector2(10, 4), 2.5, ink)
+			"grid":
+				# Gridlines draped over a sloping green.
+				for i in 5:
+					var t := i / 4.0
+					draw_line(c + Vector2(-22 + t * 8, -16 + t * 30), c + Vector2(22 - t * 4, -10 + t * 26), ink, 1.5)
+					draw_line(c + Vector2(-22 + t * 44, -16 + t * 6), c + Vector2(-14 + t * 36, 14 + t * 2), ink, 1.5)
+			"speed":
+				# A ball with speed lines behind it.
+				draw_circle(c + Vector2(10, -2), 7.0, ink)
+				for k in 3:
+					draw_line(c + Vector2(-22, -8 + k * 6), c + Vector2(-2 - k * 3, -8 + k * 6), ink, 2.0)
 			"stance":
 				# Two feet seen from above, with the ball back, centre or forward
 				# (the target is to the left, as for a right-handed golfer).
@@ -74,6 +97,10 @@ var _swing: IconButton
 var _tee: IconButton
 var _stance: IconButton
 var _camera: IconButton
+var _green_row: HBoxContainer
+var _view180: IconButton
+var _grid: IconButton
+var _speed: IconButton
 var _move: HBoxContainer
 
 
@@ -95,6 +122,26 @@ func _ready() -> void:
 	_camera.pressed.connect(func() -> void: camera_pressed.emit())
 	_style(_camera, Color(0.05, 0.1, 0.06, 0.82), 10)
 	add_child(_camera)
+	_green_row = HBoxContainer.new()
+	_green_row.add_theme_constant_override("separation", 4)
+	_view180 = IconButton.new("view180", Vector2(52, 52))
+	_view180.tooltip_text = "View from behind the hole (V)"
+	_view180.pressed.connect(func() -> void: view180_pressed.emit())
+	_grid = IconButton.new("grid", Vector2(52, 52))
+	_grid.tooltip_text = "Gridlines (G)"
+	_grid.pressed.connect(func() -> void: grid_pressed.emit())
+	_speed = IconButton.new("speed", Vector2(52, 52))
+	_speed.tooltip_text = "Check the speed of the green"
+	_speed.pressed.connect(func() -> void: speed_pressed.emit())
+	for b in [_view180, _grid, _speed]:
+		_style(b, Color(0.05, 0.1, 0.06, 0.82), 8)
+	_green_row.add_child(_view180)
+	_green_row.add_child(_grid)
+	add_child(_green_row)
+	var speed_row := HBoxContainer.new()
+	speed_row.add_child(_speed)
+	add_child(speed_row)
+	_speed.get_parent().visible = false
 	_move = HBoxContainer.new()
 	_move.add_theme_constant_override("separation", 4)
 	for d in [-1, 1]:
@@ -110,8 +157,12 @@ func _ready() -> void:
 
 
 ## Shows the controls that apply to this shot.
-func show_for(on_tee: bool, putting: bool, tee_height: int, ball_position: int, camera := 1) -> void:
+## near_green: within 30 yards of the green, where the green icons appear.
+func show_for(on_tee: bool, putting: bool, tee_height: int, ball_position: int, camera := 1,
+		near_green := false) -> void:
 	visible = true
+	_green_row.visible = near_green
+	_speed.get_parent().visible = near_green
 	_camera.visible = not putting
 	_camera.value = camera
 	_camera.caption = "View: %s" % CAMERAS[camera]

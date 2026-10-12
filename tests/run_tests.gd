@@ -37,6 +37,7 @@ func _init() -> void:
 	test_golfer()
 	test_sweet_spot()
 	test_lies()
+	test_green_speeds()
 	print("\n%d passed, %d failed" % [_passes, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -602,3 +603,34 @@ func test_lies() -> void:
 	roll.speed = 3.0
 	var rolled := BallPhysics.simulate(roll, bunker)
 	check(Lie.judge(Surface.BUNKER, rolled.rest, rolled) != Lie.PLUGGED, "a ball rolling into sand doesn't plug")
+
+
+func test_green_speeds() -> void:
+	var green := FlatCourse.new()
+	green.surface = Surface.GREEN
+	var rolls := []
+	for speed in 5:
+		green.green_speed = speed
+		var l := BallPhysics.Launch.new()
+		l.speed = 1.83
+		rolls.append(BallPhysics.simulate(l, green).rest.z)
+	check(rolls[0] < rolls[2] and rolls[2] < rolls[4], "faster greens roll further (%s)" % [rolls])
+	check(absf(rolls[2] - 3.0) < 0.3, "medium greens stay at stimp 10")
+	check(rolls[4] > rolls[2] * 1.2 and rolls[0] < rolls[2] * 0.8, "very fast and very slow are clearly different")
+	# The computer adapts its pace to the green.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 5
+	for speed in [0, 4]:
+		var made := 0
+		for i in 12:
+			var hole := Hole.new(3, 4000 + i)
+			hole.green_speed = speed
+			var from := hole.pin + Vector3(2.5, 0.0, -2.5)
+			from.y = hole.height_at(from.x, from.z)
+			var p := CpuPlayer.plan(hole, from, Surface.GREEN, Vector3.ZERO, CpuPlayer.Skill.HARD, rng)
+			var r := BallPhysics.simulate(Clubs.launch_for(p.club, from, p.heading, p.power, p.accuracy,
+					Surface.GREEN, Aim.putt_speed(Aim.flat_distance(from, hole.pin))), hole)
+			if r.outcome == BallPhysics.Outcome.HOLED or Aim.flat_distance(r.rest, hole.pin) < 0.9:
+				made += 1
+		check(made >= 8, "hard CPU judges the pace of %s greens (%d of 12 within a tap-in)" % [
+				Surface.GREEN_SPEEDS[speed], made])

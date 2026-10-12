@@ -132,6 +132,15 @@ where a full, pure strike with your club would go; the info panel gives the
 "Aim" distance. You can turn this off in **Settings**, and **M** opens the map
 at any time.
 
+**Putting:** as in the original, the golfer steps aside and the view drops
+low behind the ball so you can read the green, and the putting bar only
+appears once you start the stroke. Within 30 yards of the green three icons
+appear: **view from behind the hole** (V), **gridlines** draped over the green
+(G), and **green speed**. Each green runs very slow, slow, medium, fast or very
+fast, and the bar's full mark is set for a medium green, so allow for it. As a
+putt comes within six feet of the hole, a bird's-eye window opens over the
+cup.
+
 **Lies:** as in the original, an icon shows how the ball is sitting:
 good, fluffy (sitting up in the rough: it flies and runs), poor, very poor,
 in a divot, or in the sand (good, poor or plugged after a steep landing).

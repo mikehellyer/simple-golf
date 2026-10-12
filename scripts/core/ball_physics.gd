@@ -8,7 +8,7 @@ extends RefCounted
 ## same simulation and plays back the resulting path.
 ##
 ## The course is duck-typed (see Hole and FlatCourse): height_at, normal_at,
-## surface_at, is_in_bounds, trees_near, plus `pin` and `tree_top`.
+## surface_at, roll_decel, is_in_bounds, trees_near, plus `pin` and `tree_top`.
 
 enum Outcome { REST, HOLED, WATER, OUT_OF_BOUNDS }
 ## Things that happen during a shot, for sound and commentary.
@@ -105,7 +105,7 @@ static func simulate(launch: Launch, course, wind := Vector3.ZERO) -> Result:
 			var h := Vector2(b.vel.x, b.vel.z)
 			var speed := h.length()
 			var pull := Vector2(n.x, n.z) * (GRAVITY * ROLL_FACTOR)
-			var decel: float = Surface.ROLL_DECEL[surf]
+			var decel: float = course.roll_decel(surf)
 			var held := pull.length() <= decel
 			if speed < STOP_SPEED and held:
 				outcome = Outcome.REST

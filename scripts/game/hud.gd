@@ -68,6 +68,9 @@ signal map_proceed_pressed
 
 var meter: SwingMeter
 var map_controls: HBoxContainer
+## The bird's-eye window over the cup, shown as a putt comes close.
+var cup_view: SubViewportContainer
+var _cup_camera: Camera3D
 var _lie_icon: LieIcon
 var _lie_label: Label
 var shot_panel: ShotPanel
@@ -174,6 +177,34 @@ func _ready() -> void:
 	map_controls.add_child(proceed)
 	add_child(map_controls)
 
+	cup_view = SubViewportContainer.new()
+	cup_view.stretch = true
+	cup_view.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	cup_view.offset_left = -110
+	cup_view.offset_right = 110
+	cup_view.offset_top = 16
+	cup_view.offset_bottom = 236
+	cup_view.visible = false
+	var sub := SubViewport.new()
+	sub.size = Vector2i(220, 220)
+	sub.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
+	_cup_camera = Camera3D.new()
+	_cup_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	_cup_camera.size = 3.4
+	_cup_camera.cull_mask = 0xFFFFF & ~2
+	sub.add_child(_cup_camera)
+	cup_view.add_child(sub)
+	var frame := Panel.new()
+	var sb := StyleBoxFlat.new()
+	sb.draw_center = false
+	sb.set_border_width_all(3)
+	sb.border_color = Color(1, 1, 1, 0.8)
+	frame.add_theme_stylebox_override("panel", sb)
+	frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cup_view.add_child(frame)
+	add_child(cup_view)
+
 	_hint = _label(14)
 	_hint.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -222,6 +253,15 @@ func set_lie(surface: int, quality: int) -> void:
 	_lie_icon.queue_redraw()
 	_lie_label.text = "%s lie\n%s" % [Lie.NAMES[quality], Lie.HINTS[quality]]
 	_lie_icon.get_parent().visible = surface != Surface.GREEN
+
+
+## Shows (or hides) the bird's-eye window looking straight down on the cup.
+func show_cup(on: bool, pin := Vector3.ZERO, heading := 0.0) -> void:
+	cup_view.visible = on
+	if on:
+		# Turned so the putt comes up the window from the bottom.
+		var b := Basis.looking_at(Vector3.DOWN, Vector3(sin(heading), 0.0, cos(heading)))
+		_cup_camera.transform = Transform3D(b, pin + Vector3.UP * 20.0)
 
 
 func set_hole_info(text: String) -> void:
