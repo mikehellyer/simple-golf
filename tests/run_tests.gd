@@ -38,6 +38,7 @@ func _init() -> void:
 	test_sweet_spot()
 	test_lies()
 	test_green_speeds()
+	test_stances()
 	print("\n%d passed, %d failed" % [_passes, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -634,3 +635,19 @@ func test_green_speeds() -> void:
 				made += 1
 		check(made >= 8, "hard CPU judges the pace of %s greens (%d of 12 within a tap-in)" % [
 				Surface.GREEN_SPEEDS[speed], made])
+
+
+func test_stances() -> void:
+	var flat := FlatCourse.new()
+	var drive := func(stance: int) -> BallPhysics.Result:
+		return BallPhysics.simulate(Clubs.launch_for(Clubs.DRIVER, Vector3.ZERO, 0.0, 1.0, 0.0, Surface.FAIRWAY,
+				0.0, {stance = stance}), flat)
+	# +X is left, as seen by the golfer.
+	var open: BallPhysics.Result = drive.call(-2)
+	var closed: BallPhysics.Result = drive.call(2)
+	var square: BallPhysics.Result = drive.call(0)
+	check(absf(square.rest.x) < 0.01, "a square stance hits it straight")
+	check(open.path[open.path.size() / 4].x > 0.5 and open.rest.x < 0.0, "open: starts left, fades back right")
+	check(closed.path[closed.path.size() / 4].x < -0.5 and closed.rest.x > 0.0, "closed: starts right, draws back left")
+	check(drive.call(-1).rest.x > open.rest.x, "semi-open curves less than open")
+	check(absf(open.rest.x) < 12.0, "an open stance shapes the drive, not a wild miss (%.1f m)" % open.rest.x)

@@ -37,6 +37,8 @@ var _wrist := 0.0
 var _turn := 0.0
 var _finish_t := -1.0
 var _top := 0.0
+## -2 open .. 2 closed: moves a foot back from the line, as the stance does.
+var _stance := 0
 
 
 func _ready() -> void:
@@ -73,7 +75,8 @@ func _ready() -> void:
 
 ## Stands the golfer at the ball, aimed along heading, holding the club.
 ## ball_position: -1 back, 0 centre, 1 forward in the stance.
-func address(ball: Vector3, heading: float, club: int, ball_position: int, shirt: Color) -> void:
+func address(ball: Vector3, heading: float, club: int, ball_position: int, shirt: Color, stance := 0) -> void:
+	_stance = stance
 	_shirt.albedo_color = shirt.darkened(0.1) if shirt.v > 0.9 else shirt
 	_putter = club == Clubs.PUTTER
 	var d := Vector3(sin(heading), 0.0, cos(heading))
@@ -155,6 +158,9 @@ func _pose() -> void:
 		var key := "l" if side > 0.0 else "r"
 		var hip := hips + hip_yaw * Vector3(side * 0.1, -0.05, 0.0)
 		var ankle := Vector3(side * width, 0.09, 0.02)
+		# Open: the front (left) foot drops back; closed: the back foot does.
+		if (side > 0.0 and _stance < 0) or (side < 0.0 and _stance > 0):
+			ankle.z -= absi(_stance) * 0.07
 		# On the follow-through the trail knee (right) turns in towards the target.
 		var pole := Vector3(0.0, 0.0, 1.0)
 		if side < 0.0 and _turn > 0.0:

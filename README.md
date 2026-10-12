@@ -110,7 +110,7 @@ the game.
 | ↑ / ↓ | Change club |
 | Space or left click | Swing: start, set power, set accuracy |
 | C | Flight view: Behind, TV, Side, Green or Overhead (each player keeps their own) |
-| T / B / [ ] | Tee height, ball position in the stance, move the ball along the tee |
+| T / B / S / [ ] | Tee height, ball position, stance (open → closed), move the ball along the tee |
 | M | Isometric hole map: click to aim (right-click aims at the flag), Q/E rotate, Space or Proceed to the shot |
 | Tab | Scorecard |
 | G | Green slope grid on/off (shown when putting) |
@@ -133,13 +133,18 @@ where a full, pure strike with your club would go; the info panel gives the
 at any time.
 
 **Putting:** as in the original, the golfer steps aside and the view drops
-low behind the ball so you can read the green, and the putting bar only
-appears once you start the stroke. Within 30 yards of the green three icons
+low behind the ball so you can read the green, and the putting bar replaces
+the swing ring. Within 30 yards of the green three icons
 appear: **view from behind the hole** (V), **gridlines** draped over the green
 (G), and **green speed**. Each green runs very slow, slow, medium, fast or very
 fast, and the bar's full mark is set for a medium green, so allow for it. As a
 putt comes within six feet of the hole, a bird's-eye window opens over the
 cup.
+
+**Stance:** square, semi-open, open, semi-closed or closed. An open stance
+starts the ball left and fades it back right; a closed stance starts it right
+and draws it back left. Long clubs curve the most, and short irons hardly
+curve at all.
 
 **Lies:** as in the original, an icon shows how the ball is sitting:
 good, fluffy (sitting up in the rough: it flies and runs), poor, very poor,

@@ -9,6 +9,7 @@ signal tee_height_pressed
 signal ball_position_pressed
 signal tee_move_pressed(direction: int)
 signal camera_pressed
+signal stance_pressed
 ## The original's green icons: view from behind the hole, gridlines, speed.
 signal view180_pressed
 signal grid_pressed
@@ -60,6 +61,19 @@ class IconButton:
 					draw_line(c + Vector2(-3, -4), c + Vector2(leg - 3, 14), ink, 2.0)
 				draw_string(get_theme_default_font(), c + Vector2(-13, -7), str(value + 1),
 						HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.BLACK)
+			"feet":
+				# Feet from above, the line across the toes turned for the
+				# stance (target to the left): open pulls the front foot back.
+				var turn := value * 0.18
+				var across := Vector2(cos(turn), sin(turn))
+				for side in [-1.0, 1.0]:
+					var at: Vector2 = c + Vector2(0, -6) + across * side * 14.0
+					draw_set_transform(at, turn, Vector2.ONE)
+					draw_rect(Rect2(Vector2(-4, -10), Vector2(8, 20)), Color(0.75, 0.75, 0.8, 0.9))
+					draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+				draw_line(c + Vector2(-30, -24), c + Vector2(30, -24), Color(1, 1, 1, 0.35), 1.0)
+				draw_line(c + Vector2(-34, -24), c + Vector2(-26, -28), ink, 2.0)
+				draw_line(c + Vector2(-34, -24), c + Vector2(-26, -20), ink, 2.0)
 			"view180":
 				# A flag with an eye looking back from behind it.
 				draw_line(c + Vector2(-6, 14), c + Vector2(-6, -18), ink, 2.0)
@@ -97,6 +111,7 @@ var _swing: IconButton
 var _tee: IconButton
 var _stance: IconButton
 var _camera: IconButton
+var _feet: IconButton
 var _green_row: HBoxContainer
 var _view180: IconButton
 var _grid: IconButton
@@ -118,6 +133,11 @@ func _ready() -> void:
 	_stance.pressed.connect(func() -> void: ball_position_pressed.emit())
 	_style(_stance, Color(0.05, 0.1, 0.06, 0.82), 10)
 	add_child(_stance)
+	_feet = IconButton.new("feet", Vector2(108, 72))
+	_feet.tooltip_text = "Stance (S)"
+	_feet.pressed.connect(func() -> void: stance_pressed.emit())
+	_style(_feet, Color(0.05, 0.1, 0.06, 0.82), 10)
+	add_child(_feet)
 	_camera = IconButton.new("camera", Vector2(108, 72))
 	_camera.pressed.connect(func() -> void: camera_pressed.emit())
 	_style(_camera, Color(0.05, 0.1, 0.06, 0.82), 10)
@@ -159,8 +179,12 @@ func _ready() -> void:
 ## Shows the controls that apply to this shot.
 ## near_green: within 30 yards of the green, where the green icons appear.
 func show_for(on_tee: bool, putting: bool, tee_height: int, ball_position: int, camera := 1,
-		near_green := false) -> void:
+		near_green := false, stance := 0) -> void:
 	visible = true
+	_feet.visible = not putting
+	_feet.value = stance
+	_feet.caption = Clubs.STANCES[stance]
+	_feet.queue_redraw()
 	_green_row.visible = near_green
 	_speed.get_parent().visible = near_green
 	_camera.visible = not putting
@@ -176,6 +200,7 @@ func show_for(on_tee: bool, putting: bool, tee_height: int, ball_position: int, 
 	_stance.caption = "Ball: %s" % Clubs.BALL_POSITIONS[ball_position]
 	_tee.queue_redraw()
 	_stance.queue_redraw()
+	_feet.queue_redraw()
 
 
 ## While swinging, the set-up is locked and the SWING button prompts each click.
@@ -185,6 +210,7 @@ func set_phase(phase: SwingMeter.Phase) -> void:
 	var locked := phase != SwingMeter.Phase.IDLE
 	_tee.disabled = locked
 	_stance.disabled = locked
+	_feet.disabled = locked
 	for b in _move.get_children():
 		b.disabled = locked
 	_swing.disabled = phase == SwingMeter.Phase.DONE

@@ -175,6 +175,7 @@ func _ready() -> void:
 	_hud.shot_panel.ball_position_pressed.connect(_cycle_ball_position)
 	_hud.shot_panel.tee_move_pressed.connect(_move_on_tee)
 	_hud.shot_panel.camera_pressed.connect(_cycle_camera)
+	_hud.shot_panel.stance_pressed.connect(_cycle_stance)
 	_hud.map_rotate_pressed.connect(_rotate_iso)
 	_hud.shot_panel.view180_pressed.connect(_toggle_view180)
 	_hud.shot_panel.grid_pressed.connect(_toggle_grid)
@@ -632,6 +633,7 @@ func _decide_shot(ball_index: int, shot_club: int, shot_heading: float, power: f
 static func _clean_setup(setup: Dictionary) -> Dictionary:
 	return {tee_height = clampi(int(setup.get("tee_height", 1)), 0, 2),
 			ball_position = clampi(int(setup.get("ball_position", 0)), -1, 1),
+			stance = clampi(int(setup.get("stance", 0)), -2, 2),
 			tee_x = clampf(float(setup.get("tee_x", 0.0)), -TEE_HALF_WIDTH, TEE_HALF_WIDTH)}
 
 
@@ -749,7 +751,7 @@ func _begin_turn(ball_index: int) -> void:
 	_iso_aim = Vector3.ZERO
 	_view180 = false
 	_hud.show_cup(false)
-	_setup = {tee_height = 1, ball_position = 0, tee_x = _ball.pos.x if _on_tee_box(_ball) else 0.0}
+	_setup = {tee_height = 1, ball_position = 0, stance = 0, tee_x = _ball.pos.x if _on_tee_box(_ball) else 0.0}
 	var dist := Aim.flat_distance(_ball.pos, hole.pin)
 	club = Aim.pick_club(dist, _ball.lie)
 	_putt_speed = Aim.putt_speed(dist)
@@ -974,7 +976,7 @@ func _set_state(s: State) -> void:
 				_set_hint_for_state()
 				return
 			if mine:
-				_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  SWING or Space  ·  T tee  ·  B ball  ·  [ ] move on tee  ·  C view  ·  M map  ·  Tab card")
+				_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  SWING or Space  ·  T tee  ·  B ball  ·  S stance  ·  [ ] move on tee  ·  C view  ·  M map")
 			elif _hitter.is_cpu():
 				_hud.set_hint("%s is thinking…" % _hitter.name)
 			else:
@@ -1030,6 +1032,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_action()
 		KEY_C:
 			_cycle_camera()
+		KEY_S:
+			_cycle_stance()
 		KEY_V:
 			_toggle_view180()
 		KEY_T:
@@ -1135,7 +1139,7 @@ func _no_humans_here() -> bool:
 
 func _update_shot_panel() -> void:
 	_hud.shot_panel.show_for(_on_tee_box(_ball), club == Clubs.PUTTER, int(_setup.tee_height),
-			int(_setup.ball_position), _camera_view(), _near_green())
+			int(_setup.ball_position), _camera_view(), _near_green(), int(_setup.get("stance", 0)))
 
 
 # --- The putting green view ---------------------------------------------------
@@ -1297,7 +1301,7 @@ func _set_hint_for_state() -> void:
 	elif state == State.AIM and _human_controls() and club == Clubs.PUTTER:
 		_hud.set_hint("←/→ aim (Shift: fine)  ·  SWING or Space: start the putt  ·  V view from the hole  ·  G gridlines  ·  Tab card")
 	elif state == State.AIM and _human_controls():
-		_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  SWING or Space  ·  T tee  ·  B ball  ·  [ ] move on tee  ·  C view  ·  M map  ·  Tab card")
+		_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  SWING or Space  ·  T tee  ·  B ball  ·  S stance  ·  [ ] move on tee  ·  C view  ·  M map")
 
 
 ## The flight view for whoever is playing: TV (1) unless they've chosen another.
@@ -1311,6 +1315,15 @@ func _cycle_camera() -> void:
 	_camera_choice[_hitter.name] = (_camera_view() + 1) % ShotPanel.CAMERAS.size()
 	_update_shot_panel()
 	_hud.show_message("View: %s" % ShotPanel.CAMERAS[_camera_view()])
+
+
+## Square → semi-open → open → semi-closed → closed → square.
+func _cycle_stance() -> void:
+	if state != State.AIM or not _human_controls() or club == Clubs.PUTTER:
+		return
+	const ORDER := [0, -1, -2, 1, 2]
+	_setup.stance = ORDER[(ORDER.find(int(_setup.get("stance", 0))) + 1) % ORDER.size()]
+	_aim_changed()
 
 
 func _cycle_tee_height() -> void:
@@ -1650,10 +1663,16 @@ func _reach() -> float:
 ## Full shots use the circular swingometer around the golfer; putts the bar.
 func _place_meter() -> void:
 	var m := _hud.meter
-	m.style = SwingMeter.Style.BAR if club == Clubs.PUTTER else SwingMeter.Style.RING
+	var style := SwingMeter.Style.BAR if club == Clubs.PUTTER else SwingMeter.Style.RING
+	if m.style != style:
+		# The meter only redraws itself while swinging; redraw on a switch so
+		# a stale ring (or bar) isn't left on screen.
+		m.style = style
+		m.queue_redraw()
 	if m.style == SwingMeter.Style.BAR:
-		# The putting bar only appears once the stroke begins.
-		m.visible = (state == State.SWING or state == State.FLIGHT) and not _iso
+		# The putting bar shows while lining up the putt, not just once it starts.
+		m.visible = (state == State.AIM or state == State.SWING or state == State.FLIGHT) and not _iso
+		m.queue_redraw()
 		return
 	if not _golfer.visible:
 		return
@@ -1680,7 +1699,7 @@ func _place_golfer() -> void:
 	if _ball == null or state == State.SWING or state == State.FLIGHT:
 		return
 	var shirt := _hitter.colour if _hitter else Color.WHITE
-	_golfer.address(_ball.pos, heading, club, int(_setup.ball_position), shirt)
+	_golfer.address(_ball.pos, heading, club, int(_setup.ball_position), shirt, int(_setup.get("stance", 0)))
 	_golfer.visible = club != Clubs.PUTTER
 
 
@@ -1746,6 +1765,8 @@ func _update_hud() -> void:
 		if _on_tee_box(_ball):
 			bits.append("Tee %s" % Clubs.TEE_HEIGHTS[int(_setup.tee_height)].to_lower())
 		bits.append("ball %s" % Clubs.BALL_POSITIONS[int(_setup.ball_position)].to_lower())
+		if int(_setup.get("stance", 0)) != 0:
+			bits.append("%s stance" % Clubs.STANCES[int(_setup.stance)].to_lower())
 		lines.append("Set-up: " + ", ".join(bits))
 	_hud.set_shot_info("\n".join(lines))
 	if _hud.shot_panel.visible:

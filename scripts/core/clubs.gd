@@ -26,7 +26,9 @@ const PUTTER := 12
 ## ball_position: -1 back in the stance, 0 centre, 1 forward.
 const TEE_HEIGHTS := ["Low", "Medium", "High"]
 const BALL_POSITIONS := {-1: "Back", 0: "Centre", 1: "Forward"}
-const DEFAULT_SETUP := {tee_height = 1, ball_position = 0}
+## stance: -2 open, -1 semi-open, 0 square, 1 semi-closed, 2 closed.
+const STANCES := {-2: "Open", -1: "Semi-open", 0: "Square", 1: "Semi-closed", 2: "Closed"}
+const DEFAULT_SETUP := {tee_height = 1, ball_position = 0, stance = 0}
 
 ## Sidespin (rpm) and push/pull (radians) per unit of swing-meter error.
 const SIDESPIN_PER_ERROR := 9000.0
@@ -108,6 +110,13 @@ static func _apply_setup(l: BallPhysics.Launch, club: int, lie: int, setup: Dict
 		else:
 			l.elevation += deg_to_rad(step * 0.4)
 			l.backspin *= 1.0 - step * 0.04
+	# Stance (manual p.69): an open stance swings out-to-in, starting the ball
+	# left with fade spin that curves it back right; closed is the reverse,
+	# a draw. Short irons, with their backspin, barely curve.
+	var stance := clampi(int(setup.get("stance", 0)), -2, 2)
+	if stance != 0:
+		l.heading -= stance * 0.03
+		l.sidespin -= stance * (280.0 + 40.0 * club)
 	match clampi(int(setup.get("ball_position", 0)), -1, 1):
 		1:
 			# Forward in the stance: higher and softer, a little less spin,
