@@ -68,7 +68,9 @@ func _ready() -> void:
 	edit.text = "Edit…"
 	edit.pressed.connect(func() -> void:
 		var c := selected_course()
-		if c:
+		if c and c.is_real():
+			_status.text = "Real courses can't be edited, but you can play them as they are."
+		elif c:
 			editor_requested.emit(c))
 	course_row.add_child(edit)
 	box.add_child(_labelled("Course", course_row))
@@ -177,19 +179,9 @@ func _select_meta(o: OptionButton, meta: String) -> void:
 	o.select(o.item_count - 2)
 
 
-## Fills the course list: a new random course, today's course, then saved ones.
+## Fills the course list (random, today's, real courses, saved ones).
 func refresh_courses(select_name := "") -> void:
-	var previous := _course.get_item_text(_course.selected) if _course.item_count > 0 else ""
-	if select_name != "":
-		previous = select_name
-	_course.clear()
-	_course.add_item("Random course")
-	_course.add_item(Course.daily().name)
-	for n in Course.list_saved():
-		_course.add_item(n)
-	for i in _course.item_count:
-		if _course.get_item_text(i) == previous:
-			_course.select(i)
+	CoursePicker.fill(_course, select_name)
 
 
 ## Selects a course coming back from the editor: by name if it's saved,
@@ -209,12 +201,7 @@ func selected_course() -> Course:
 		if c == null:
 			_status.text = "That course code isn't valid."
 		return c
-	match _course.selected:
-		0:
-			return Course.new("Random course", randi())
-		1:
-			return Course.daily()
-	return Course.load_saved(_course.get_item_text(_course.selected))
+	return CoursePicker.chosen(_course)
 
 
 func _labelled(text: String, control: Control) -> HBoxContainer:

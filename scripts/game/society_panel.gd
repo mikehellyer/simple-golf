@@ -714,10 +714,7 @@ func _holes_option() -> OptionButton:
 
 func _course_option() -> OptionButton:
 	var o := OptionButton.new()
-	o.add_item("Random course")
-	o.add_item(Course.daily().name)
-	for n in Course.list_saved():
-		o.add_item(n)
+	CoursePicker.fill(o)
 	return o
 
 
@@ -727,9 +724,4 @@ func _chosen_course(o: OptionButton, code: LineEdit) -> Course:
 		if c == null:
 			_status.text = "That course code isn't valid."
 		return c
-	match o.selected:
-		0:
-			return Course.new("Random course", randi())
-		1:
-			return Course.daily()
-	return Course.load_saved(o.get_item_text(o.selected))
+	return CoursePicker.chosen(o)

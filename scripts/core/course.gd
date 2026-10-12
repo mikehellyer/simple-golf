@@ -12,11 +12,25 @@ var name := "Random course"
 var base_seed := 0
 ## Hole number (1-based, as a string for JSON) -> overrides Dictionary.
 var edits := {}
+## A real course bundled with the game (see CourseMaps), or "" for a
+## generated one. Real courses ignore edits; the seed still decides pins,
+## wind and trees.
+var map := ""
 
 
-func _init(course_name := "Random course", seed_value := 0) -> void:
+func _init(course_name := "Random course", seed_value := 0, map_id := "") -> void:
 	name = course_name
 	base_seed = seed_value
+	map = map_id
+
+
+## A real course, with a fresh seed for its pins and weather.
+static func real(map_id: String, seed_value: int) -> Course:
+	return Course.new(CourseMaps.name_of(map_id), seed_value, map_id)
+
+
+func is_real() -> bool:
+	return map != ""
 
 
 ## The same course for everyone in the world on a given day.
@@ -43,17 +57,28 @@ func set_hole_overrides(number: int, overrides: Dictionary) -> void:
 
 
 func make_hole(number: int) -> Hole:
+	if map != "":
+		var mapped := CourseMaps.hole(map, number)
+		if not mapped.is_empty():
+			return Hole.new(number, hole_seed(number), {"__map": mapped})
+		push_warning("Real course %s has no hole %d; generating one instead." % [map, number])
 	var overrides := hole_overrides(number)
 	var layout := int(overrides.get("layout", 0))
 	return Hole.new(number, hole_seed(number) + layout * 104729, overrides)
 
 
 func to_dict() -> Dictionary:
-	return {name = name, seed = base_seed, edits = edits}
+	var d := {name = name, seed = base_seed, edits = edits}
+	if map != "":
+		d.map = map
+	return d
 
 
 static func from_dict(d: Dictionary) -> Course:
 	var c := Course.new(str(d.get("name", "Course")), int(d.get("seed", 0)))
+	var map_id := str(d.get("map", ""))
+	if map_id.is_valid_filename() and not map_id.contains("/"):
+		c.map = map_id
 	var e = d.get("edits", {})
 	if typeof(e) == TYPE_DICTIONARY:
 		for k in e:
@@ -76,6 +101,8 @@ static func _clean(overrides: Dictionary) -> Dictionary:
 # --- Share codes -----------------------------------------------------------
 
 func to_code() -> String:
+	if map != "":
+		return "SGC-%s-%s" % [map, _to_base36(base_seed)]
 	if edits.is_empty():
 		return "SG-" + _to_base36(base_seed)
 	var json := JSON.stringify(to_dict()).to_utf8_buffer()
@@ -89,6 +116,12 @@ func to_code() -> String:
 ## Returns null if the code isn't valid.
 static func from_code(code: String) -> Course:
 	code = code.strip_edges().replace(" ", "")
+	if code.begins_with("SGC-"):
+		var rest := code.substr(4)
+		var cut := rest.rfind("-")
+		var s := _from_base36(rest.substr(cut + 1)) if cut > 0 else -1
+		var map_id := rest.left(cut)
+		return Course.real(map_id, s) if s >= 0 and CourseMaps.has(map_id) else null
 	if code.to_upper().begins_with("SG-"):
 		var s := _from_base36(code.substr(3))
 		return Course.new("Course %s" % code.substr(3).to_upper(), s) if s >= 0 else null

@@ -40,9 +40,21 @@ static func plan(hole: Hole, from: Vector3, lie: int, wind: Vector3, skill: Skil
 	if putting:
 		powers = [0.78, 0.84, 0.89, 0.94, 1.0]
 	elif reach > dist:
-		var est := clampf(Aim.flat_distance(from, target) / reach, 0.15, 1.0)
-		for f in [0.9, 0.95, 1.0, 1.05, 1.1]:
-			powers.append(minf(est * f, 1.0))
+		# Distance isn't proportional to power (a chip's carry grows roughly
+		# with its square), so find the power that gets there by simulating.
+		var want := Aim.flat_distance(from, target)
+		var lo := 0.03
+		var hi := 1.0
+		for i in 7:
+			var mid := (lo + hi) * 0.5
+			var trial := BallPhysics.simulate(Clubs.launch_for(p.club, from, base, mid, 0.0, lie, putt_speed), hole, wind)
+			if Aim.flat_distance(from, trial.rest) < want:
+				lo = mid
+			else:
+				hi = mid
+		var est := (lo + hi) * 0.5
+		for f in [0.94, 0.97, 1.0, 1.03, 1.06]:
+			powers.append(clampf(est * f, 0.03, 1.0))
 	else:
 		powers = [1.0]
 

@@ -65,6 +65,10 @@ a free Oracle Cloud machine in about half an hour.
 
 Every course is generated from a seed, so a whole course fits in a short code.
 
+- **Real courses:** **Ponte Vedra Stadium** is the real layout of the
+  Stadium Course at Sawgrass, Ponte Vedra Beach, Florida: every hole's
+  shape, its greens, bunkers and lakes, and the island green on 17. It's
+  built from OpenStreetMap data (see below).
 - **Random course** gives a fresh course every time.
 - **Course of the day** is the same for everyone in the world on a given
   (UTC) date, so you can compare scores with friends.
@@ -133,9 +137,31 @@ audio assets.
 
 Run with `-- --demo` to watch four computer golfers play a fourball.
 
+### Adding real courses
+
+`tools/import_osm_course.py` turns any golf course that's well mapped in
+[OpenStreetMap](https://www.openstreetmap.org) into a course file in
+`courses/`. A course is well mapped when each hole is drawn as a line with
+its number and par, with greens, tees, bunkers and water as shapes. Fairways
+are filled in automatically where they're missing.
+
+```bash
+tools/import_osm_course.py --bbox SOUTH,WEST,NORTH,EAST --holes "Course name prefix" \
+    --name "Name in the game" --description "Based on ..." --out courses/my-course.json
+```
+
+Real courses can't be edited in the course editor, but they work everywhere
+else, including online games and society tournaments (everyone's game has
+the same course file).
+
 ## Licence, privacy and code signing
 
-Simple-Golf is free software under the [MIT licence](LICENSE). It collects no
+Simple-Golf is free software under the [MIT licence](LICENSE). The real
+course layouts in `courses/` are derived from OpenStreetMap: © OpenStreetMap
+contributors, available under the
+[Open Database Licence](https://opendatacommons.org/licenses/odbl/). Course
+names are neutral; they describe the real course they're based on without
+using its trademarks. It collects no
 personal data. The only automatic network request is a check with GitHub for
 a newer version when the game starts, which you can turn off in **Settings**.
 Windows builds are code-signed; see [CODE_SIGNING.md](CODE_SIGNING.md) for the

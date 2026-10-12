@@ -658,7 +658,10 @@ func _start_hole(number: int) -> void:
 	heading = Aim.default_heading(hole, _ball.pos, club, _ball.lie)
 	_update_hud()
 	_set_state(State.FLYBY)
-	_hud.show_message("Hole %d\nPar %d  ·  %d yards" % [hole.number, hole.par, roundi(hole.yardage() * YARDS)])
+	var intro := "Hole %d\nPar %d  ·  %d yards" % [hole.number, hole.par, roundi(hole.yardage() * YARDS)]
+	if course.is_real():
+		intro += "\n%s\nCourse layout © OpenStreetMap contributors" % course.name
+	_hud.show_message(intro)
 
 
 func _begin_turn(ball_index: int) -> void:

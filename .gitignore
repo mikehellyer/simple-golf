@@ -5,3 +5,4 @@ server/.venv/
 server/**/__pycache__/
 server/*.db
 server/.pytest_cache/
+__pycache__/

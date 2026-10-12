@@ -183,7 +183,7 @@ func _bake_texture(origin: Vector2, width: float, depth: float, texel: float) ->
 				Surface.GREEN:
 					if posmod(floori(z / 2.0), 2) == 0:
 						col = col.darkened(0.06)
-				Surface.ROUGH:
+				Surface.ROUGH when not hole.is_mapped():
 					# Lighter first cut just off the fairway.
 					var off := hole.lateral_distance(x, z) - hole.fairway_half_width(z)
 					if off < 3.0 and z > 40.0 and z < hole.length:
@@ -207,6 +207,27 @@ func _build_water() -> void:
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.roughness = 0.08
 	mat.metallic = 0.3
+	# Real courses: lakes as their mapped shapes.
+	for shape in hole.water_shapes:
+		var tris := Geometry2D.triangulate_polygon(shape)
+		if tris.is_empty():
+			continue
+		var verts := PackedVector3Array()
+		var normals := PackedVector3Array()
+		for p in shape:
+			verts.append(Vector3(p.x, MappedLayout.WATER_LEVEL, p.y))
+			normals.append(Vector3.UP)
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		arrays[Mesh.ARRAY_NORMAL] = normals
+		arrays[Mesh.ARRAY_INDEX] = _upward(tris, shape)
+		var mesh := ArrayMesh.new()
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		var mi := MeshInstance3D.new()
+		mi.mesh = mesh
+		mi.material_override = mat
+		add_child(mi)
 	for pond in hole.ponds:
 		var disc := CylinderMesh.new()
 		disc.top_radius = pond.z + 0.8
@@ -218,6 +239,23 @@ func _build_water() -> void:
 		mi.material_override = mat
 		mi.position = Vector3(pond.x, pond.w, pond.y)
 		add_child(mi)
+
+
+## Orders each triangle so it faces up (the game's x axis is mirrored, so
+## winding depends on the shape's direction).
+static func _upward(tris: PackedInt32Array, shape: PackedVector2Array) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	for k in range(0, tris.size(), 3):
+		var a := shape[tris[k]]
+		var b := shape[tris[k + 1]]
+		var c := shape[tris[k + 2]]
+		# Same test as the terrain grid: clockwise seen from above faces up.
+		var cross := (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+		if cross > 0.0:
+			out.append_array([tris[k], tris[k + 1], tris[k + 2]])
+		else:
+			out.append_array([tris[k], tris[k + 2], tris[k + 1]])
+	return out
 
 
 ## Two kinds of tree, picked by a hash of position: broadleaf (a cluster of

@@ -112,26 +112,14 @@ func open(net: NetSession) -> void:
 	if _net != net:
 		_net = net
 		_net.lobby_changed.connect(_refresh)
-	_course.clear()
-	_course.add_item("Random course")
-	_course.add_item(Course.daily().name)
-	for n in Course.list_saved():
-		_course.add_item(n)
 	var current: Dictionary = _net.settings.get("course", {})
-	for i in _course.item_count:
-		if _course.get_item_text(i) == current.get("name", ""):
-			_course.select(i)
+	CoursePicker.fill(_course, str(current.get("name", "")))
 	visible = true
 	_refresh()
 
 
 func _selected_course() -> Course:
-	match _course.selected:
-		0:
-			return Course.new("Random course", randi())
-		1:
-			return Course.daily()
-	var c := Course.load_saved(_course.get_item_text(_course.selected))
+	var c := CoursePicker.chosen(_course)
 	return c if c else Course.new("Random course", randi())
 
 
@@ -208,7 +196,8 @@ func _push_settings() -> void:
 	s.mode = _mode.selected
 	s.holes = SetupMenu.HOLE_OPTIONS[maxi(_holes.selected, 0)]
 	var current: Dictionary = s.get("course", {})
-	if current.get("name", "") != _course.get_item_text(_course.selected):
+	var label := _course.get_item_text(_course.selected)
+	if current.get("name", "") != label and "%s (real course)" % current.get("name", "") != label:
 		s.course = _selected_course().to_dict()
 	_net.set_settings(s)
 

@@ -32,6 +32,7 @@ func _init() -> void:
 	test_course_codes()
 	test_profiles()
 	test_society_addresses()
+	test_real_course()
 	print("\n%d passed, %d failed" % [_passes, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -431,3 +432,63 @@ func test_society_addresses() -> void:
 			"home network addresses use http")
 	check(SocietyClient.normalise_url("https://fridayfour.duckdns.org") == "https://fridayfour.duckdns.org",
 			"full addresses are left alone")
+
+
+func test_real_course() -> void:
+	var id := "ponte-vedra-stadium"
+	check(id in CourseMaps.ids() and CourseMaps.hole_count(id) == 18, "Ponte Vedra Stadium is bundled with 18 holes")
+	var c := Course.real(id, 99)
+	var back := Course.from_code(c.to_code())
+	check(c.to_code().begins_with("SGC-") and back != null and back.map == id and back.base_seed == 99,
+			"real course codes round-trip (%s)" % c.to_code())
+	check(Course.from_dict(c.to_dict()).map == id, "real courses survive the trip to the society server")
+	var start := Time.get_ticks_msec()
+	var par := 0
+	var island_water := 0
+	for n in range(1, 19):
+		var h := c.make_hole(n)
+		par += h.par
+		check(h.is_mapped(), "hole %d is built from the map" % n)
+		check(h.surface_at(h.pin.x, h.pin.z) == Surface.GREEN, "hole %d pin is on its green" % n)
+		check(h.surface_at(0.0, 0.0) == Surface.TEE, "hole %d tees off from a tee" % n)
+		check(h.pin.z > 100.0 and absf(h.pin.x) < 40.0, "hole %d plays up the screen (pin %s)" % [n, h.pin])
+		if n == 17:
+			# The island green: water all the way between tee and green.
+			for k in range(10, 90):
+				var p := Vector3.ZERO.lerp(h.pin, k / 100.0)
+				if h.surface_at(p.x, p.z) == Surface.WATER:
+					island_water += 1
+	check(par == 72, "the Stadium Course is par 72 (got %d)" % par)
+	check(island_water > 40, "17 is an island green: water across most of the carry (%d of 80)" % island_water)
+	print("built 18 real holes in %d ms" % (Time.get_ticks_msec() - start))
+
+	# Hard computer golfers should get round the real course in a sensible score.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 3
+	var over := 0
+	start = Time.get_ticks_msec()
+	for n in range(1, 19):
+		var hole := c.make_hole(n)
+		var pos := hole.tee
+		var lie := Surface.TEE
+		var shots := 0
+		var holed := false
+		while shots < 12 and not holed:
+			shots += 1
+			var p := CpuPlayer.plan(hole, pos, lie, Vector3.ZERO, CpuPlayer.Skill.HARD, rng)
+			var r := BallPhysics.simulate(Clubs.launch_for(p.club, pos, p.heading, p.power, p.accuracy, lie,
+					Aim.putt_speed(Aim.flat_distance(pos, hole.pin))), hole)
+			match r.outcome:
+				BallPhysics.Outcome.HOLED:
+					holed = true
+				BallPhysics.Outcome.REST:
+					pos = r.rest
+					lie = hole.surface_at(pos.x, pos.z)
+				_:
+					shots += 1
+					pos = r.last_safe
+					lie = hole.surface_at(pos.x, pos.z)
+		check(holed, "hard CPU finishes real hole %d" % n)
+		over += shots - hole.par
+	check(over < 25, "hard CPU plays the real course in a sensible score (%+d)" % over)
+	print("hard CPU round at Ponte Vedra Stadium: %+d in %d ms" % [over, Time.get_ticks_msec() - start])
