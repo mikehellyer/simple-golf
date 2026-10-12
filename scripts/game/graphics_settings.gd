@@ -18,8 +18,11 @@ var renderer := 0
 var check_updates := true
 ## Start each full shot on the isometric hole map, as in the original.
 var map_first := true
-## Draw the golfer in MicroProse Golf's chunky pixel style.
-var pixel_golfer := true
+## How the golfer is drawn: in MicroProse Golf's pixel-art style at a chosen
+## pixel size, or smooth (cartoon shading, full detail).
+const GOLFER_STYLES := ["Classic pixels (chunky)", "Refined pixels", "Smooth"]
+const GOLFER_PIXEL_SIZE := [3, 2, 1]
+var golfer_style := 1
 
 
 static func load_saved() -> GraphicsSettings:
@@ -31,7 +34,7 @@ static func load_saved() -> GraphicsSettings:
 	g.renderer = clampi(cfg.get_value("graphics", "renderer", 0), 0, RENDERERS.size() - 1)
 	g.check_updates = cfg.get_value("general", "check_updates", true)
 	g.map_first = cfg.get_value("general", "map_first", true)
-	g.pixel_golfer = cfg.get_value("graphics", "pixel_golfer", true)
+	g.golfer_style = clampi(cfg.get_value("graphics", "golfer_style", 1), 0, GOLFER_STYLES.size() - 1)
 	return g
 
 
@@ -44,7 +47,7 @@ func save() -> void:
 	cfg.set_value("graphics", "renderer", renderer)
 	cfg.set_value("general", "check_updates", check_updates)
 	cfg.set_value("general", "map_first", map_first)
-	cfg.set_value("graphics", "pixel_golfer", pixel_golfer)
+	cfg.set_value("graphics", "golfer_style", golfer_style)
 	cfg.save(SETTINGS_PATH)
 
 

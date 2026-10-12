@@ -103,7 +103,6 @@ var _golfer: Golfer
 var _pixel_view: SubViewport
 var _pixel_camera: Camera3D
 var _pixel_rect: TextureRect
-const PIXEL_SIZE := 3
 var _aim_line: MeshInstance3D
 var _trail: MeshInstance3D
 var _map_pin: MeshInstance3D
@@ -2037,20 +2036,20 @@ func _build_pixel_golfer_view(env: Environment) -> void:
 
 ## Keeps the pixel-art golfer's camera exactly where the main camera is.
 func _sync_pixel_golfer() -> void:
-	# The smooth style just shows the golfer in the main view instead.
-	var pixel := _graphics.pixel_golfer
-	if pixel:
-		_camera.cull_mask &= ~Golfer.LAYER
-	else:
-		_camera.cull_mask |= Golfer.LAYER
-	var on := pixel and _golfer.visible and _camera.current
+	# Always drawn through its own view (so it keeps the cartoon outline);
+	# the pixel size sets how chunky it looks, 1 being full detail.
+	var pixel_size: int = GraphicsSettings.GOLFER_PIXEL_SIZE[_graphics.golfer_style]
+	var on := _golfer.visible and _camera.current
 	_pixel_rect.visible = on
 	if not on:
 		return
 	var view := get_viewport().get_visible_rect().size
-	var want := Vector2i(ceili(view.x / PIXEL_SIZE), ceili(view.y / PIXEL_SIZE))
+	var want := Vector2i(ceili(view.x / pixel_size), ceili(view.y / pixel_size))
 	if _pixel_view.size != want:
 		_pixel_view.size = want
+	_pixel_view.msaa_3d = Viewport.MSAA_4X if pixel_size == 1 else Viewport.MSAA_DISABLED
+	_pixel_rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR if pixel_size == 1 \
+			else CanvasItem.TEXTURE_FILTER_NEAREST
 	_pixel_camera.global_transform = _camera.global_transform
 	_pixel_camera.fov = _camera.fov
 	_pixel_camera.near = _camera.near
