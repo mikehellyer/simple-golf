@@ -1166,6 +1166,7 @@ func _process(delta: float) -> void:
 			if _is_authority() and _no_humans_here() and state_time > AUTO_ADVANCE_TIME:
 				_action()
 	_move_camera(delta)
+	_place_meter()
 	for b in _balls:
 		b.mesh.scale = Vector3.ONE * maxf(1.0, _camera.global_position.distance_to(b.mesh.position) / 30.0)
 		b.map_marker.position = b.mesh.position
@@ -1362,6 +1363,30 @@ func _setup_map_camera(editor := false) -> void:
 
 func _reach() -> float:
 	return Aim.reach(club, _ball.lie, Aim.flat_distance(_ball.pos, hole.pin))
+
+
+## Full shots use the circular swingometer around the golfer; putts the bar.
+func _place_meter() -> void:
+	var m := _hud.meter
+	m.style = SwingMeter.Style.BAR if club == Clubs.PUTTER else SwingMeter.Style.RING
+	if m.style == SwingMeter.Style.BAR or not _golfer.visible:
+		return
+	# Hold the ring still once the ball is away (the camera follows the ball).
+	if state == State.FLIGHT:
+		m.visible = not _landing_cam
+		return
+	var view := get_viewport().get_visible_rect().size
+	var cam := get_viewport().get_camera_3d()
+	var centre := _golfer.global_position.lerp(_ball.pos, 0.45) + Vector3.UP * 0.9
+	if cam == null or cam.is_position_behind(centre) or cam == _map_camera:
+		m.ring_centre = view * 0.5
+		m.ring_radius = 150.0
+	else:
+		var c := cam.unproject_position(centre)
+		var top := cam.unproject_position(centre + Vector3.UP * 1.15)
+		m.ring_centre = c
+		m.ring_radius = clampf(c.distance_to(top), 90.0, minf(view.y * 0.38, 240.0))
+	m.queue_redraw()
 
 
 ## Stands the golfer at the ball about to be played, aimed and holding the club.

@@ -83,11 +83,7 @@ func _ready() -> void:
 	add_child(_message)
 
 	meter = SwingMeter.new()
-	meter.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	meter.offset_left = -280
-	meter.offset_right = 280
-	meter.offset_top = -110
-	meter.offset_bottom = -54
+	meter.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(meter)
 
 	shot_panel = ShotPanel.new()

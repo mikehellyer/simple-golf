@@ -35,6 +35,7 @@ func _init() -> void:
 	test_real_course()
 	test_shot_setup()
 	test_golfer()
+	test_sweet_spot()
 	print("\n%d passed, %d failed" % [_passes, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -550,3 +551,15 @@ func test_golfer() -> void:
 	var impact: Vector3 = g.transform * g._parts["clubhead"].position
 	check(impact.distance_to(ball) < 0.15, "back at the ball at impact (%.2f m)" % impact.distance_to(ball))
 	g.free()
+
+
+func test_sweet_spot() -> void:
+	var soft := SwingMeter.sweet_spot(0.4)
+	var full := SwingMeter.sweet_spot(1.0)
+	var over := SwingMeter.sweet_spot(1.1)
+	check(soft > full and full > over, "the sweet spot shrinks the harder you swing")
+	check(is_equal_approx(full, SwingMeter.SWEET_SPOT), "full power keeps the usual sweet spot")
+	check(over < full * 0.6, "overswinging makes a pure strike much harder")
+	check(is_equal_approx(SwingMeter._angle(0.0), PI * 0.5) and is_equal_approx(SwingMeter._angle(1.0), PI * 1.5),
+			"the ring runs from 6 o'clock to the check mark at 12")
+	check(SwingMeter._angle(SwingMeter.MAX_VALUE) > SwingMeter._angle(1.0), "overswing carries on past 12 o'clock")
