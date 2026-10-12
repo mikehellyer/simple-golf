@@ -33,6 +33,7 @@ func _init() -> void:
 	test_profiles()
 	test_society_addresses()
 	test_real_course()
+	test_shot_setup()
 	print("\n%d passed, %d failed" % [_passes, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -492,3 +493,39 @@ func test_real_course() -> void:
 		over += shots - hole.par
 	check(over < 25, "hard CPU plays the real course in a sensible score (%+d)" % over)
 	print("hard CPU round at Ponte Vedra Stadium: %+d in %d ms" % [over, Time.get_ticks_msec() - start])
+
+
+func test_shot_setup() -> void:
+	var flat := FlatCourse.new()
+	var drive := func(setup: Dictionary, lie := Surface.TEE) -> BallPhysics.Result:
+		return BallPhysics.simulate(Clubs.launch_for(Clubs.DRIVER, Vector3.ZERO, 0.0, 1.0, 0.0, lie, 0.0, setup), flat)
+	var low: BallPhysics.Result = drive.call({tee_height = 0, ball_position = 0})
+	var mid: BallPhysics.Result = drive.call({tee_height = 1, ball_position = 0})
+	var high: BallPhysics.Result = drive.call({tee_height = 2, ball_position = 0})
+	var angle := func(tee: int) -> float:
+		return Clubs.launch_for(Clubs.DRIVER, Vector3.ZERO, 0.0, 1.0, 0.0, Surface.TEE, 0.0,
+				{tee_height = tee, ball_position = 0}).elevation
+	check(angle.call(0) < angle.call(1) and angle.call(1) < angle.call(2), "a higher tee launches the driver steeper")
+	# Less spin offsets the steeper launch, so the gain is in distance, not height.
+	check(low.rest.z < mid.rest.z and mid.rest.z < high.rest.z,
+			"the higher the tee, the further the drive (%.0f / %.0f / %.0f m)" % [low.rest.z, mid.rest.z, high.rest.z])
+	var default_launch := Clubs.launch_for(Clubs.DRIVER, Vector3.ZERO, 0.0, 1.0, 0.0, Surface.TEE, 0.0)
+	check(is_equal_approx(default_launch.elevation, Clubs.launch_for(Clubs.DRIVER, Vector3.ZERO, 0.0, 1.0, 0.0,
+			Surface.TEE, 0.0, Clubs.DEFAULT_SETUP).elevation), "medium tee, centre ball is the default")
+	var fairway_low: BallPhysics.Result = drive.call({tee_height = 0, ball_position = 0}, Surface.FAIRWAY)
+	var fairway_high: BallPhysics.Result = drive.call({tee_height = 2, ball_position = 0}, Surface.FAIRWAY)
+	var hook := func(tee: int) -> float:
+		return BallPhysics.simulate(Clubs.launch_for(Clubs.DRIVER, Vector3.ZERO, 0.0, 1.0, -0.08, Surface.TEE, 0.0,
+				{tee_height = tee, ball_position = 0}), flat).rest.x
+	check(hook.call(2) > hook.call(0) * 1.2, "a mistimed drive curves more off a high tee")
+	check(high.carry - low.carry > 10.0, "tee height is a real choice (%.0f m more carry teed high)" % (high.carry - low.carry))
+	check(high.apex > low.apex + 4.0, "teed high flies visibly higher")
+	check(is_equal_approx(fairway_low.apex, fairway_high.apex), "tee height only matters on the tee")
+	var iron := func(pos: int) -> BallPhysics.Result:
+		return BallPhysics.simulate(Clubs.launch_for(7, Vector3.ZERO, 0.0, 1.0, 0.0, Surface.FAIRWAY, 0.0,
+				{tee_height = 1, ball_position = pos}), flat)
+	var back: BallPhysics.Result = iron.call(-1)
+	var centre: BallPhysics.Result = iron.call(0)
+	var forward: BallPhysics.Result = iron.call(1)
+	check(back.apex < centre.apex and centre.apex < forward.apex, "ball back flies lower, forward higher")
+	check(back.apex < centre.apex * 0.85, "ball back is a proper low punch (apex %.0f vs %.0f m)" % [back.apex, centre.apex])

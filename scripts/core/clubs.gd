@@ -21,6 +21,13 @@ const DRIVER := 0
 const SAND_WEDGE := 11
 const PUTTER := 12
 
+## Shot set-up chosen before the swing (MicroProse-style):
+## tee_height: 0 low, 1 medium, 2 high (only matters for a tee shot);
+## ball_position: -1 back in the stance, 0 centre, 1 forward.
+const TEE_HEIGHTS := ["Low", "Medium", "High"]
+const BALL_POSITIONS := {-1: "Back", 0: "Centre", 1: "Forward"}
+const DEFAULT_SETUP := {tee_height = 1, ball_position = 0}
+
 ## Sidespin (rpm) and push/pull (radians) per unit of swing-meter error.
 const SIDESPIN_PER_ERROR := 9000.0
 const PUSH_PER_ERROR := 0.12
@@ -61,7 +68,7 @@ static func putt_speed_for(distance: float) -> float:
 ## power: 0..1.1 (above 1 is overswing). accuracy: swing-meter error, positive
 ## means the downswing click was early (push and slice), negative late (pull and hook).
 static func launch_for(club: int, position: Vector3, heading: float, power: float,
-		accuracy: float, lie: int, putt_speed: float) -> BallPhysics.Launch:
+		accuracy: float, lie: int, putt_speed: float, setup := DEFAULT_SETUP) -> BallPhysics.Launch:
 	var l := BallPhysics.Launch.new()
 	l.position = position
 	# Overswinging buys distance but magnifies any timing error.
@@ -77,4 +84,38 @@ static func launch_for(club: int, position: Vector3, heading: float, power: floa
 	# Grass between club and ball kills spin, so shots from the rough fly and run.
 	l.backspin = float(c.spin) * (0.5 if lie == Surface.ROUGH else 1.0)
 	l.sidespin = err * SIDESPIN_PER_ERROR
+	_apply_setup(l, club, lie, setup)
 	return l
+
+
+## Tee height and ball position change how the ball comes off the club.
+static func _apply_setup(l: BallPhysics.Launch, club: int, lie: int, setup: Dictionary) -> void:
+	var wood := club <= 2
+	if lie == Surface.TEE:
+		# A risk-or-control choice. Teed high, a wood is caught on the
+		# upswing: a bigger, higher drive (more for the wind to work on) that
+		# curves more when it's mistimed. Teed low: shorter, lower, straighter.
+		# Irons barely notice.
+		var step := clampi(int(setup.get("tee_height", 1)), 0, 2) - 1
+		if wood:
+			l.elevation += deg_to_rad(step * 2.5)
+			l.backspin *= 1.0 - step * 0.12
+			l.speed *= 1.0 + step * 0.025
+			l.sidespin *= 1.0 + step * 0.3
+		else:
+			l.elevation += deg_to_rad(step * 0.4)
+			l.backspin *= 1.0 - step * 0.04
+	match clampi(int(setup.get("ball_position", 0)), -1, 1):
+		1:
+			# Forward in the stance: higher and softer, a little less spin,
+			# and a touch more curve on a mistimed swing.
+			l.elevation += deg_to_rad(2.5)
+			l.backspin *= 0.92
+			l.sidespin *= 1.1
+		-1:
+			# Back in the stance: a low, controlled punch that spins more and
+			# goes a touch shorter, under the wind or the branches.
+			l.elevation -= deg_to_rad(3.5)
+			l.backspin *= 1.06
+			l.speed *= 0.985
+			l.sidespin *= 0.85

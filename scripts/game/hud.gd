@@ -21,6 +21,7 @@ class WindArrow:
 
 
 var meter: SwingMeter
+var shot_panel: ShotPanel
 var scorecard: ScorecardView
 var _player_label: Label
 var _hole_label: Label
@@ -89,6 +90,14 @@ func _ready() -> void:
 	meter.offset_bottom = -54
 	add_child(meter)
 
+	shot_panel = ShotPanel.new()
+	shot_panel.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
+	shot_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	shot_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	shot_panel.offset_right = -16
+	shot_panel.visible = false
+	add_child(shot_panel)
+
 	_hint = _label(14)
 	_hint.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -124,6 +133,11 @@ func set_player(text: String, colour: Color) -> void:
 func set_standings(lines: PackedStringArray) -> void:
 	_standings_panel.visible = not lines.is_empty()
 	_standings.text = "\n".join(lines)
+
+
+func _process(_delta: float) -> void:
+	if shot_panel.visible:
+		shot_panel.set_phase(meter.phase)
 
 
 func set_hole_info(text: String) -> void:

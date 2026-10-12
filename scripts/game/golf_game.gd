@@ -36,6 +36,8 @@ const ACK_TIMEOUT := 12.0
 const MAX_STROKES := 12
 const MAX_WIND := 9.0
 const MAP_LAYER := 2
+## How far either side of the middle of the tee box the ball can be teed.
+const TEE_HALF_WIDTH := 3.0
 
 
 ## One ball in play on the current hole.
@@ -102,6 +104,10 @@ var _shot_start := Vector3.ZERO
 ## The host's verdict on the shot being played: {pos, lie, strokes, done, outcome, msg}.
 var _resolution := {}
 var _swung_locally := false
+## The shot set-up (MicroProse-style): tee height, ball position in the
+## stance, and where on the tee box the ball is teed (tee_x, metres).
+var _setup := {tee_height = 1, ball_position = 0, tee_x = 0.0}
+var _pending_setup := {}
 ## Host: a shot for this turn has been decided and sent; don't decide again.
 var _decided := false
 ## Host: peers that have finished watching the current shot.
@@ -147,6 +153,10 @@ func _ready() -> void:
 	_hud = Hud.new()
 	add_child(_hud)
 	_hud.meter.swing_finished.connect(_on_meter_finished)
+	_hud.shot_panel.swing_pressed.connect(_swing_pressed)
+	_hud.shot_panel.tee_height_pressed.connect(_cycle_tee_height)
+	_hud.shot_panel.ball_position_pressed.connect(_cycle_ball_position)
+	_hud.shot_panel.tee_move_pressed.connect(_move_on_tee)
 	_hud.meter.clicked.connect(func() -> void: _sfx.play("tick", -6.0))
 	_sfx = Sfx.new()
 	add_child(_sfx)
@@ -424,10 +434,12 @@ func net_begin_turn(ball_index: int) -> void:
 ## A shot has been decided: everyone replays the swing, then the flight.
 @rpc("authority", "call_local", "reliable")
 func net_play_shot(ball_index: int, shot_club: int, shot_heading: float, power: float,
-		accuracy: float, resolution: Dictionary) -> void:
+		accuracy: float, resolution: Dictionary, setup: Dictionary) -> void:
 	_ball = _balls[ball_index]
 	club = shot_club
 	heading = shot_heading
+	_pending_setup = setup
+	_apply_tee_spot(_ball, setup)
 	_resolution = resolution
 	_pending_swing = Vector2(power, accuracy)
 	_acks.clear()
@@ -446,18 +458,19 @@ func net_play_shot(ball_index: int, shot_club: int, shot_heading: float, power: 
 
 ## A client's swing, sent to the host for approval.
 @rpc("any_peer", "call_remote", "reliable")
-func net_request_shot(shot_club: int, shot_heading: float, power: float, accuracy: float) -> void:
+func net_request_shot(shot_club: int, shot_heading: float, power: float, accuracy: float,
+		setup: Dictionary) -> void:
 	if not _net.is_host or _hitter == null or state != State.AIM and state != State.SWING:
 		return
 	if multiplayer.get_remote_sender_id() != _hitter.owner or _hitter.is_cpu():
 		return
 	_decide_shot(_ball.index, clampi(shot_club, 0, Clubs.PUTTER), shot_heading,
-			clampf(power, 0.0, SwingMeter.MAX_VALUE), clampf(accuracy, SwingMeter.MIN_VALUE, 1.0))
+			clampf(power, 0.0, SwingMeter.MAX_VALUE), clampf(accuracy, SwingMeter.MIN_VALUE, 1.0), _clean_setup(setup))
 
 
 ## Live aim from whoever is playing, so everyone can watch them line up.
 @rpc("any_peer", "call_remote", "unreliable_ordered")
-func net_aim(shot_club: int, shot_heading: float) -> void:
+func net_aim(shot_club: int, shot_heading: float, setup: Dictionary) -> void:
 	if _hitter == null or state != State.AIM:
 		return
 	var sender := multiplayer.get_remote_sender_id()
@@ -465,6 +478,8 @@ func net_aim(shot_club: int, shot_heading: float) -> void:
 		return
 	club = clampi(shot_club, 0, Clubs.PUTTER)
 	heading = shot_heading
+	_setup = _clean_setup(setup)
+	_apply_tee_spot(_ball, _setup)
 	_update_green_grid()
 	_update_aim()
 	_update_hud()
@@ -567,19 +582,41 @@ func _advance_hole() -> void:
 
 
 ## Host: simulate the shot, settle where the ball ends up, tell everyone.
-func _decide_shot(ball_index: int, shot_club: int, shot_heading: float, power: float, accuracy: float) -> void:
+func _decide_shot(ball_index: int, shot_club: int, shot_heading: float, power: float, accuracy: float,
+		setup := {tee_height = 1, ball_position = 0, tee_x = 0.0}) -> void:
 	if _decided:
 		return
 	_decided = true
 	var b := _balls[ball_index]
+	_apply_tee_spot(b, setup)
 	var launch := Clubs.launch_for(shot_club, b.pos, shot_heading, power, accuracy, b.lie,
-			Aim.putt_speed(Aim.flat_distance(b.pos, hole.pin)))
+			Aim.putt_speed(Aim.flat_distance(b.pos, hole.pin)), setup)
 	var result := BallPhysics.simulate(launch, hole, wind)
 	var resolution := _resolve(result, b, shot_club)
 	if _online():
-		net_play_shot.rpc(ball_index, shot_club, shot_heading, power, accuracy, resolution)
+		net_play_shot.rpc(ball_index, shot_club, shot_heading, power, accuracy, resolution, setup)
 	else:
-		net_play_shot(ball_index, shot_club, shot_heading, power, accuracy, resolution)
+		net_play_shot(ball_index, shot_club, shot_heading, power, accuracy, resolution, setup)
+
+
+## Keeps a shot set-up within the allowed choices (it may come from the network).
+static func _clean_setup(setup: Dictionary) -> Dictionary:
+	return {tee_height = clampi(int(setup.get("tee_height", 1)), 0, 2),
+			ball_position = clampi(int(setup.get("ball_position", 0)), -1, 1),
+			tee_x = clampf(float(setup.get("tee_x", 0.0)), -TEE_HALF_WIDTH, TEE_HALF_WIDTH)}
+
+
+## A ball still teed up (not one that has been hit and stopped on the tee
+## box) can be teed anywhere along the box between the markers.
+func _on_tee_box(b: Ball) -> bool:
+	return b.lie == Surface.TEE and absf(b.pos.z) < 0.05 and absf(b.pos.x) <= TEE_HALF_WIDTH + 0.01
+
+
+func _apply_tee_spot(b: Ball, setup: Dictionary) -> void:
+	if _on_tee_box(b):
+		var x := clampf(float(setup.get("tee_x", 0.0)), -TEE_HALF_WIDTH, TEE_HALF_WIDTH)
+		b.pos = Vector3(x, hole.height_at(x, 0.0), 0.0)
+		b.mesh.position = b.pos
 
 
 ## Where the ball ends up after a shot, with penalties applied.
@@ -671,6 +708,7 @@ func _begin_turn(ball_index: int) -> void:
 	_swung_locally = false
 	_replaying = false
 	_decided = false
+	_setup = {tee_height = 1, ball_position = 0, tee_x = _ball.pos.x if _on_tee_box(_ball) else 0.0}
 	var dist := Aim.flat_distance(_ball.pos, hole.pin)
 	club = Aim.pick_club(dist, _ball.lie)
 	_putt_speed = Aim.putt_speed(dist)
@@ -690,9 +728,9 @@ func _on_meter_finished(power: float, accuracy: float) -> void:
 	# A swing made on this machine: the host decides it; clients ask the host.
 	_swung_locally = true
 	if _is_authority():
-		_decide_shot(_ball.index, club, heading, power, accuracy)
+		_decide_shot(_ball.index, club, heading, power, accuracy, _setup.duplicate())
 	else:
-		net_request_shot.rpc_id(1, club, heading, power, accuracy)
+		net_request_shot.rpc_id(1, club, heading, power, accuracy, _setup.duplicate())
 		_hud.set_hint("Waiting for the host…")
 
 
@@ -700,7 +738,7 @@ func _launch() -> void:
 	_ball.swings += 1
 	_shot_start = _ball.pos
 	var launch := Clubs.launch_for(club, _ball.pos, heading, _pending_swing.x, _pending_swing.y,
-			_ball.lie, _putt_speed)
+			_ball.lie, _putt_speed, _pending_setup if not _pending_setup.is_empty() else Clubs.DEFAULT_SETUP)
 	_shot = BallPhysics.simulate(launch, hole, wind)
 	_play_strike(_pending_swing.x)
 	_event_index = 0
@@ -871,6 +909,9 @@ func _set_state(s: State) -> void:
 	_map_target.visible = aiming
 	_trail.visible = s == State.FLIGHT or s == State.RESULT
 	_hud.set_meter_visible(aiming or s == State.FLIGHT)
+	_hud.shot_panel.visible = aiming and mine
+	if aiming and mine:
+		_update_shot_panel()
 	_update_green_grid()
 	if s == State.AIM or s == State.FLYBY:
 		_hud.scorecard.visible = false
@@ -881,7 +922,7 @@ func _set_state(s: State) -> void:
 		State.AIM:
 			_hud.meter.reset()
 			if mine:
-				_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  Space swing  ·  M map  ·  Tab card  ·  G slopes  ·  N sound")
+				_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  SWING button or Space  ·  T tee  ·  B ball position  ·  [ ] move on tee  ·  M map  ·  Tab card")
 			elif _hitter.is_cpu():
 				_hud.set_hint("%s is thinking…" % _hitter.name)
 			else:
@@ -910,7 +951,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if state in [State.MENU, State.LOBBY, State.EDITOR]:
 		return
 	if event is InputEventMouseButton:
-		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		# Clicking the course skips and moves things on, but never swings:
+		# that's what the SWING button is for.
+		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT and state != State.AIM and state != State.SWING:
 			_action()
 		return
 	if not (event is InputEventKey and event.pressed and not event.echo):
@@ -918,6 +961,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	match event.keycode:
 		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
 			_action()
+		KEY_T:
+			_cycle_tee_height()
+		KEY_B:
+			_cycle_ball_position()
+		KEY_BRACKETLEFT:
+			_move_on_tee(1)
+		KEY_BRACKETRIGHT:
+			_move_on_tee(-1)
 		KEY_UP:
 			_change_club(-1)
 		KEY_DOWN:
@@ -1011,6 +1062,40 @@ func _no_humans_here() -> bool:
 	return true
 
 
+func _update_shot_panel() -> void:
+	_hud.shot_panel.show_for(_on_tee_box(_ball), club == Clubs.PUTTER, int(_setup.tee_height),
+			int(_setup.ball_position))
+
+
+## The SWING button: the same as pressing Space.
+func _swing_pressed() -> void:
+	if state == State.AIM or state == State.SWING:
+		_action()
+
+
+func _cycle_tee_height() -> void:
+	if state != State.AIM or not _human_controls() or not _on_tee_box(_ball):
+		return
+	_setup.tee_height = (int(_setup.tee_height) + 1) % 3
+	_aim_changed()
+
+
+func _cycle_ball_position() -> void:
+	if state != State.AIM or not _human_controls() or club == Clubs.PUTTER:
+		return
+	_setup.ball_position = wrapi(int(_setup.ball_position) + 1, -1, 2)
+	_aim_changed()
+
+
+## Moves the ball along the tee box; +1 is towards the golfer's left.
+func _move_on_tee(direction: int) -> void:
+	if state != State.AIM or not _human_controls() or not _on_tee_box(_ball):
+		return
+	_setup.tee_x = clampf(float(_setup.tee_x) + direction * 0.75, -TEE_HALF_WIDTH, TEE_HALF_WIDTH)
+	_apply_tee_spot(_ball, _setup)
+	_aim_changed()
+
+
 func _change_club(step: int) -> void:
 	if state != State.AIM or not _human_controls():
 		return
@@ -1027,7 +1112,7 @@ func _aim_changed() -> void:
 	var now := Time.get_ticks_msec() / 1000.0
 	if _online() and now - _aim_sent_at > AIM_SEND_INTERVAL:
 		_aim_sent_at = now
-		net_aim.rpc(club, heading)
+		net_aim.rpc(club, heading, _setup)
 
 
 func _on_update_available(version: String, url: String) -> void:
@@ -1099,7 +1184,15 @@ func _cpu_turn() -> void:
 			# Host-run computer golfer: decide now; everyone replays the swing.
 			_decide_shot(_ball.index, club, heading, _cpu_plan.power, _cpu_plan.accuracy)
 		else:
-			# --autoplay: swing this machine's human player on the meter.
+			# --autoplay: swing this machine's human player on the meter,
+			# using the set-up options so tests cover them travelling online.
+			if _on_tee_box(_ball):
+				_setup.tee_height = 2
+				_setup.tee_x = 1.5
+				_apply_tee_spot(_ball, _setup)
+			if club != Clubs.PUTTER:
+				_setup.ball_position = 1
+			_aim_changed()
 			_hud.show_message("")
 			_set_state(State.SWING)
 			_hud.meter.autoplay(_cpu_plan.power, _cpu_plan.accuracy)
@@ -1308,7 +1401,15 @@ func _update_hud() -> void:
 	else:
 		lines.append("Club: %s  (carry %d yds)" % [Clubs.club_name(club), roundi(_reach() * YARDS)])
 		_hud.meter.full_label = "100%"
+	if club != Clubs.PUTTER:
+		var bits := PackedStringArray()
+		if _on_tee_box(_ball):
+			bits.append("Tee %s" % Clubs.TEE_HEIGHTS[int(_setup.tee_height)].to_lower())
+		bits.append("ball %s" % Clubs.BALL_POSITIONS[int(_setup.ball_position)].to_lower())
+		lines.append("Set-up: " + ", ".join(bits))
 	_hud.set_shot_info("\n".join(lines))
+	if _hud.shot_panel.visible:
+		_update_shot_panel()
 
 	var f := _dir(heading)
 	var left := Vector3(cos(heading), 0.0, -sin(heading))

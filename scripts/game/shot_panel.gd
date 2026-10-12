@@ -1,0 +1,133 @@
+class_name ShotPanel
+extends VBoxContainer
+## The MicroProse-style shot controls down the right of the screen: a big
+## SWING button (the only place a mouse click swings), tee height and ball
+## position, and moving the ball along the tee box.
+
+signal swing_pressed
+signal tee_height_pressed
+signal ball_position_pressed
+signal tee_move_pressed(direction: int)
+
+
+## A button that draws its own little picture above its caption.
+class IconButton:
+	extends Button
+	## "swing", "tee" or "stance"
+	var kind := "swing"
+	var value := 0
+	var caption := ""
+
+	func _init(icon_kind: String, size_px: Vector2) -> void:
+		kind = icon_kind
+		custom_minimum_size = size_px
+		focus_mode = Control.FOCUS_NONE
+
+	func _draw() -> void:
+		var c := size / 2.0
+		var ink := Color(1, 1, 1, 0.95) if not disabled else Color(1, 1, 1, 0.35)
+		var font := get_theme_default_font()
+		match kind:
+			"swing":
+				# A club head swinging through an arc.
+				var r := size.x * 0.28
+				draw_arc(c + Vector2(0, -6), r, PI * 0.95, PI * 2.05, 24, Color(1, 1, 1, 0.35), 3.0)
+				var tip := c + Vector2(0, -6) + Vector2.from_angle(PI * 1.75) * r
+				draw_line(c + Vector2(-2, -6 - r * 0.2), tip, ink, 3.0)
+				draw_rect(Rect2(tip - Vector2(4, 3), Vector2(12, 7)), ink)
+				draw_circle(c + Vector2(r * 0.55, r * 0.35 - 6), 4.0, ink)
+			"tee":
+				# A tee peg in the ground with the ball sitting at the chosen height.
+				var ground := c.y + 8.0
+				draw_line(Vector2(c.x - 22, ground), Vector2(c.x + 22, ground), Color(0.5, 0.85, 0.5, 0.8), 2.0)
+				var peg_top := ground - 4.0 - value * 6.0
+				draw_line(Vector2(c.x, ground + 8.0), Vector2(c.x, peg_top), Color(0.95, 0.85, 0.6), 3.0)
+				draw_line(Vector2(c.x - 4, peg_top), Vector2(c.x + 4, peg_top), Color(0.95, 0.85, 0.6), 2.0)
+				draw_circle(Vector2(c.x, peg_top - 6.0), 6.0, ink)
+			"stance":
+				# Two feet seen from above, with the ball back, centre or forward
+				# (the target is to the left, as for a right-handed golfer).
+				var y := c.y - 4.0
+				for fx in [-14.0, 14.0]:
+					draw_rect(Rect2(Vector2(c.x + fx - 4, y - 10), Vector2(8, 20)), Color(0.75, 0.75, 0.8, 0.9))
+				draw_line(Vector2(c.x - 26, y - 18), Vector2(c.x - 34, y - 18), ink, 2.0)
+				draw_colored_polygon(PackedVector2Array([Vector2(c.x - 38, y - 18), Vector2(c.x - 32, y - 22),
+						Vector2(c.x - 32, y - 14)]), ink)
+				draw_circle(Vector2(c.x - value * 9.0, y + 16.0), 5.0, ink)
+		if caption != "":
+			draw_string(font, Vector2(0, size.y - 8), caption, HORIZONTAL_ALIGNMENT_CENTER, size.x, 13, ink)
+
+
+var _swing: IconButton
+var _tee: IconButton
+var _stance: IconButton
+var _move: HBoxContainer
+
+
+func _ready() -> void:
+	add_theme_constant_override("separation", 8)
+	_swing = IconButton.new("swing", Vector2(108, 108))
+	_swing.pressed.connect(func() -> void: swing_pressed.emit())
+	_style(_swing, Color(0.16, 0.5, 0.22, 0.92), 54)
+	add_child(_swing)
+	_tee = IconButton.new("tee", Vector2(108, 84))
+	_tee.pressed.connect(func() -> void: tee_height_pressed.emit())
+	_style(_tee, Color(0.05, 0.1, 0.06, 0.82), 10)
+	add_child(_tee)
+	_stance = IconButton.new("stance", Vector2(108, 84))
+	_stance.pressed.connect(func() -> void: ball_position_pressed.emit())
+	_style(_stance, Color(0.05, 0.1, 0.06, 0.82), 10)
+	add_child(_stance)
+	_move = HBoxContainer.new()
+	_move.add_theme_constant_override("separation", 4)
+	for d in [-1, 1]:
+		var b := Button.new()
+		b.text = "◀" if d < 0 else "▶"
+		b.tooltip_text = "Move the ball along the tee"
+		b.custom_minimum_size = Vector2(52, 36)
+		b.focus_mode = Control.FOCUS_NONE
+		b.pressed.connect(func() -> void: tee_move_pressed.emit(d))
+		_style(b, Color(0.05, 0.1, 0.06, 0.82), 8)
+		_move.add_child(b)
+	add_child(_move)
+
+
+## Shows the controls that apply to this shot.
+func show_for(on_tee: bool, putting: bool, tee_height: int, ball_position: int) -> void:
+	visible = true
+	_tee.visible = on_tee and not putting
+	_move.visible = on_tee
+	_stance.visible = not putting
+	_tee.value = tee_height
+	_tee.caption = "Tee: %s" % Clubs.TEE_HEIGHTS[tee_height]
+	_stance.value = ball_position
+	_stance.caption = "Ball: %s" % Clubs.BALL_POSITIONS[ball_position]
+	_tee.queue_redraw()
+	_stance.queue_redraw()
+
+
+## While swinging, the set-up is locked and the SWING button prompts each click.
+func set_phase(phase: SwingMeter.Phase) -> void:
+	_swing.caption = {SwingMeter.Phase.IDLE: "SWING", SwingMeter.Phase.BACKSWING: "POWER!",
+			SwingMeter.Phase.DOWNSWING: "SNAP!", SwingMeter.Phase.DONE: ""}[phase]
+	var locked := phase != SwingMeter.Phase.IDLE
+	_tee.disabled = locked
+	_stance.disabled = locked
+	for b in _move.get_children():
+		b.disabled = locked
+	_swing.disabled = phase == SwingMeter.Phase.DONE
+	_swing.queue_redraw()
+	_tee.queue_redraw()
+	_stance.queue_redraw()
+
+
+func _style(b: Button, colour: Color, radius: int) -> void:
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = colour.lightened(0.12) if state == "hover" else (colour.darkened(0.2) if state == "pressed" else colour)
+		if state == "disabled":
+			sb.bg_color = Color(colour, colour.a * 0.6)
+		sb.set_corner_radius_all(radius)
+		sb.set_border_width_all(2)
+		sb.border_color = Color(1, 1, 1, 0.25)
+		b.add_theme_stylebox_override(state, sb)
