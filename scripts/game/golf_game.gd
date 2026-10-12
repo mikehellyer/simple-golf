@@ -637,12 +637,21 @@ func _decide_shot(ball_index: int, shot_club: int, shot_heading: float, power: f
 	setup.lie_quality = b.quality
 	var launch := Clubs.launch_for(shot_club, b.pos, shot_heading, power, accuracy, b.lie,
 			Aim.putt_speed(Aim.flat_distance(b.pos, hole.pin)), setup)
+	if _net_log:
+		print("INPUT %s" % _launch_inputs(ball_index, shot_club, b.pos, b.lie, shot_heading, power, accuracy, setup))
 	var result := BallPhysics.simulate(launch, hole, wind)
 	var resolution := _resolve(result, b, shot_club)
 	if _online():
 		net_play_shot.rpc(ball_index, shot_club, shot_heading, power, accuracy, resolution, setup)
 	else:
 		net_play_shot(ball_index, shot_club, shot_heading, power, accuracy, resolution, setup)
+
+
+## Everything a shot's simulation depends on, for the network test's logs.
+func _launch_inputs(ball: int, shot_club: int, pos: Vector3, lie: int, h: float, power: float,
+		accuracy: float, setup: Dictionary) -> String:
+	return "hole=%d ball=%d club=%d pos=%.4f,%.4f,%.4f lie=%d heading=%.6f power=%.6f acc=%.6f setup=%s" % [
+			hole.number, ball, shot_club, pos.x, pos.y, pos.z, lie, h, power, accuracy, setup]
 
 
 ## Keeps a shot set-up within the allowed choices (it may come from the network).
@@ -802,6 +811,9 @@ func _launch() -> void:
 	_shot_start = _ball.pos
 	var launch := Clubs.launch_for(club, _ball.pos, heading, _pending_swing.x, _pending_swing.y,
 			_ball.lie, _putt_speed, _pending_setup if not _pending_setup.is_empty() else Clubs.DEFAULT_SETUP)
+	if _net_log:
+		print("LOCAL %s" % _launch_inputs(_ball.index, club, _ball.pos, _ball.lie, heading,
+				_pending_swing.x, _pending_swing.y, _pending_setup))
 	_shot = BallPhysics.simulate(launch, hole, wind)
 	_play_strike(_pending_swing.x)
 	_event_index = 0

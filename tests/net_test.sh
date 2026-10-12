@@ -58,6 +58,13 @@ drift=$(grep -E '^SHOT .*outcome=(0|1) ' "$OUT/client.log" | awk '{
 	split($0, a, "pos="); split(a[2], p, " local="); split(p[1], x, ","); split(p[2], y, ",")
 	d = (x[1]-y[1])^2 + (x[3]-y[3])^2; if (d > 0.0001) n++ } END { print n+0 }')
 
+# For any drift, show what each machine fed into the simulation.
+if [ "$drift" -gt 0 ]; then
+	echo "Drift details (host decided / client simulated):"
+	paste <(grep '^INPUT' "$OUT/host.log") <(grep '^LOCAL' "$OUT/client.log") | awk -F'\t' '{
+		split($1, a, "INPUT "); split($2, b, "LOCAL "); if (a[2] != b[2]) { print "  host:   " a[2]; print "  client: " b[2] } }'
+fi
+
 shots=$(grep -c '^SHOT' "$OUT/host.log" || true)
 echo "shots: $shots, holes: $(grep -c '^HOLE' "$OUT/host.log" || true), client sim drift: $drift"
 grep '^ROUND' "$OUT/host.log" || true
