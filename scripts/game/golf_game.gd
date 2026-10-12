@@ -130,6 +130,12 @@ var _arc_dirty := false
 ## Putting green view: looking back from behind the hole (the original's
 ## "view from 180°").
 var _view180 := false
+## The putting views from the manual (p.20): 0 ball to hole, 1 hole to ball
+## (the 180° view), 2 perpendicular to the line.
+var _green_view := 0
+## Each player's view of their golfer for full shots: false from behind,
+## true from the side (face-on), as in the original's swing screen.
+var _side_view := {}
 ## Host: a shot for this turn has been decided and sent; don't decide again.
 var _decided := false
 ## Host: peers that have finished watching the current shot.
@@ -760,6 +766,7 @@ func _begin_turn(ball_index: int) -> void:
 	_decided = false
 	_iso_aim = Vector3.ZERO
 	_view180 = false
+	_green_view = 0
 	_hud.show_cup(false)
 	_setup = {tee_height = 1, ball_position = 0, stance = 0, tee_x = _ball.pos.x if _on_tee_box(_ball) else 0.0}
 	var dist := Aim.flat_distance(_ball.pos, hole.pin)
@@ -986,7 +993,7 @@ func _set_state(s: State) -> void:
 				_set_hint_for_state()
 				return
 			if mine:
-				_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  SWING or Space  ·  T tee  ·  B ball  ·  S stance  ·  [ ] move on tee  ·  C view  ·  M map")
+				_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  SWING or Space  ·  T tee  ·  B ball  ·  S stance  ·  [ ] on tee  ·  V side view  ·  C flight view  ·  M map")
 			elif _hitter.is_cpu():
 				_hud.set_hint("%s is thinking…" % _hitter.name)
 			else:
@@ -1034,6 +1041,11 @@ func _unhandled_input(event: InputEvent) -> void:
 				_iso_aim = hole.pin
 				heading = Aim.heading_to(_ball.pos, hole.pin)
 				_aim_changed()
+			return
+		# On the green, a right-click looks across the line (manual p.20).
+		if event.button_index == MOUSE_BUTTON_RIGHT and state == State.AIM and _human_controls() \
+				and (club == Clubs.PUTTER or _near_green()):
+			_green_view = 0 if _green_view == 2 else 2
 			return
 		# Clicking the course skips and moves things on, but never swings:
 		# that's what the SWING button is for.
@@ -1219,10 +1231,21 @@ func _near_green() -> bool:
 	return _ball.lie in [Surface.GREEN, Surface.FRINGE] or Aim.flat_distance(_ball.pos, hole.pin) < 30.0 / YARDS
 
 
+## V: on the green, cycle ball-to-hole → hole-to-ball → perpendicular; for
+## full shots, switch between behind and side-on views of the golfer.
 func _toggle_view180() -> void:
-	if state != State.AIM or not _near_green():
+	if state != State.AIM:
 		return
-	_view180 = not _view180
+	if club == Clubs.PUTTER or _near_green():
+		_green_view = (_green_view + 1) % 3
+		_hud.show_message(["View from the ball", "View from behind the hole", "View across the line"][_green_view])
+	elif _hitter:
+		_side_view[_hitter.name] = not _side_view.get(_hitter.name, false)
+		_hud.show_message("Side view of the golfer" if _side_view[_hitter.name] else "View from behind the golfer")
+
+
+func _golfer_side_view() -> bool:
+	return _hitter != null and bool(_side_view.get(_hitter.name, false))
 
 
 func _toggle_grid() -> void:
@@ -1382,9 +1405,9 @@ func _set_hint_for_state() -> void:
 	if _iso and state == State.AIM and _human_controls():
 		_hud.set_hint("Click to aim  ·  right-click: at the flag  ·  ↑/↓ club  ·  Q/E rotate  ·  Space or Proceed: to the shot  ·  M map")
 	elif state == State.AIM and _human_controls() and club == Clubs.PUTTER:
-		_hud.set_hint("←/→ aim (Shift: fine)  ·  SWING or Space: start the putt  ·  V view from the hole  ·  G gridlines  ·  Tab card")
+		_hud.set_hint("←/→ aim (Shift: fine)  ·  SWING or Space: start the putt  ·  V change view (right-click: across the line)  ·  G gridlines")
 	elif state == State.AIM and _human_controls():
-		_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  SWING or Space  ·  T tee  ·  B ball  ·  S stance  ·  [ ] move on tee  ·  C view  ·  M map")
+		_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  SWING or Space  ·  T tee  ·  B ball  ·  S stance  ·  [ ] on tee  ·  V side view  ·  C flight view  ·  M map")
 
 
 ## The flight view for whoever is playing: TV (1) unless they've chosen another.
@@ -1635,11 +1658,24 @@ func _play_shot_events() -> void:
 
 func _aim_camera() -> void:
 	var dir := _dir(heading)
-	if _view180 and _near_green():
+	var to_hole := _flat(hole.pin - _ball.pos)
+	if _green_view == 1 and _near_green():
 		# From behind the hole, looking back along the line at the ball.
-		var back := _flat(_ball.pos - hole.pin).normalized()
-		_cam_target = hole.pin - back * 2.5 + Vector3.UP * 1.0
+		_cam_target = hole.pin + to_hole.normalized() * 2.5 + Vector3.UP * 1.0
 		_cam_look = _ball.pos
+	elif _green_view == 2 and _near_green():
+		# At right angles to the line, halfway along, to judge the slope.
+		var mid := _ball.pos.lerp(hole.pin, 0.5)
+		var across := to_hole.normalized().cross(Vector3.UP)
+		_cam_target = mid + across * maxf(4.0, to_hole.length() * 0.8) + Vector3.UP * 0.8
+		_cam_look = mid
+	elif club != Clubs.PUTTER and _golfer_side_view():
+		# Side-on (face-on) to the golfer, from beyond the ball, as in the
+		# original's close view of the swing.
+		var face := _flat(_ball.pos - _golfer.global_position).normalized()
+		var body := _golfer.global_position + Vector3.UP * 1.0
+		_cam_target = body + face * 4.2 + Vector3.UP * 0.2 - dir * 0.6
+		_cam_look = body + dir * 0.3
 	elif club == Clubs.PUTTER:
 		# Low, straight down the line: the golfer stands aside while putting,
 		# as in the original, so the whole green can be read.
@@ -1771,7 +1807,8 @@ func _place_meter() -> void:
 		return
 	# Hold the ring still once the ball is away (the camera follows the ball).
 	if state == State.FLIGHT:
-		m.visible = not _landing_cam
+		# Leave the result showing briefly, then clear it as the camera follows the ball.
+		m.visible = not _landing_cam and _playback < 0.6
 		return
 	var view := get_viewport().get_visible_rect().size
 	var cam := get_viewport().get_camera_3d()

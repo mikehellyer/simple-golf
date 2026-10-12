@@ -109,6 +109,7 @@ the game.
 | ← / → | Aim (hold Shift for fine aim) |
 | ↑ / ↓ | Change club |
 | Space or left click | Swing: start, set power, set accuracy |
+| V | Side-on view of the golfer for full shots; on the green, cycle the three putting views |
 | C | Flight view: Behind, TV, Side, Green or Overhead (each player keeps their own) |
 | T / B / S / [ ] | Tee height, ball position, stance (open → closed), move the ball along the tee |
 | M | Isometric hole map: click to aim (right-click aims at the flag), Q/E rotate, Space or Proceed to the shot |
@@ -143,7 +144,8 @@ at any time.
 **Putting:** as in the original, the golfer steps aside and the view drops
 low behind the ball so you can read the green, and the putting bar replaces
 the swing ring. Within 30 yards of the green three icons
-appear: **view from behind the hole** (V), **gridlines** draped over the green
+appear: **change view** (V cycles from the ball, from behind the hole, and
+across the line; a right-click jumps across the line), **gridlines** draped over the green
 (G), and **green speed**. Each green runs very slow, slow, medium, fast or very
 fast, and the bar's full mark is set for a medium green, so allow for it. As a
 putt comes within six feet of the hole, a bird's-eye window opens over the

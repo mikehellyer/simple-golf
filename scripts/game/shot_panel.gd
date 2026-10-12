@@ -145,7 +145,7 @@ func _ready() -> void:
 	_green_row = HBoxContainer.new()
 	_green_row.add_theme_constant_override("separation", 4)
 	_view180 = IconButton.new("view180", Vector2(52, 52))
-	_view180.tooltip_text = "View from behind the hole (V)"
+	_view180.tooltip_text = "Change view (V): from the hole, across the line, or side-on to the golfer"
 	_view180.pressed.connect(func() -> void: view180_pressed.emit())
 	_grid = IconButton.new("grid", Vector2(52, 52))
 	_grid.tooltip_text = "Gridlines (G)"
@@ -185,7 +185,9 @@ func show_for(on_tee: bool, putting: bool, tee_height: int, ball_position: int, 
 	_feet.value = stance
 	_feet.caption = Clubs.STANCES[stance]
 	_feet.queue_redraw()
-	_green_row.visible = near_green
+	# The view button is always there; the grid and speed only near the green.
+	_green_row.visible = true
+	_grid.visible = near_green
 	_speed.get_parent().visible = near_green
 	_camera.visible = not putting
 	_camera.value = camera
