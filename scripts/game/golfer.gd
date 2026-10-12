@@ -5,6 +5,11 @@ extends Node3D
 ## to impact as the meter returns, and the finish plays out as the ball is
 ## struck. Putts are a short pendulum stroke.
 ##
+## Dressed like MicroProse Golf's golfer: a red long-sleeved jumper with a
+## white collar, dark navy trousers, white shoes, a white glove and a cap.
+## The cap carries the player's colour so players can tell whose turn it is
+## (player 1's is white, exactly as in the original).
+##
 ## Built from rounded parts (capsules and spheres) with real joints: arms
 ## bend at the elbows (solved each frame so both hands stay on the grip),
 ## legs flex at the knees, and the body turns through the swing.
@@ -24,7 +29,10 @@ const FINISH_TIME := 0.7
 const ARM := 0.56
 
 var _parts := {}
+## The classic red jumper, and the cap in the player's colour.
+const JUMPER := Color(0.78, 0.1, 0.1)
 var _shirt := StandardMaterial3D.new()
+var _cap := StandardMaterial3D.new()
 var _putter := false
 var _shoulders := Vector3.ZERO
 var _ball_local := Vector3.ZERO
@@ -42,26 +50,39 @@ var _stance := 0
 
 
 func _ready() -> void:
-	var skin := _mat(Color(0.92, 0.74, 0.6))
-	var trousers := _mat(Color(0.16, 0.18, 0.3))
-	var shoes := _mat(Color(0.96, 0.96, 0.96))
+	var skin := _mat(Color(0.93, 0.72, 0.58))
+	var trousers := _mat(Color(0.13, 0.12, 0.32))
+	var shoes := _mat(Color(0.97, 0.97, 0.97))
 	var glove := _mat(Color(0.98, 0.98, 0.98))
-	var cap := _mat(Color(0.95, 0.95, 0.95))
-	var hair := _mat(Color(0.3, 0.2, 0.12))
+	var collar := _mat(Color(0.97, 0.97, 0.97))
+	var cap := _cap
+	cap.roughness = 0.85
+	cap.albedo_color = Color(0.96, 0.96, 0.96)
+	var hair := _mat(Color(0.32, 0.22, 0.13))
 	var steel := _mat(Color(0.82, 0.82, 0.86))
 	steel.metallic = 0.85
 	steel.roughness = 0.25
 	var grip := _mat(Color(0.1, 0.1, 0.1))
 	for side in ["l", "r"]:
-		_parts["thigh_" + side] = _capsule(trousers, 0.085)
-		_parts["shin_" + side] = _capsule(trousers, 0.07)
-		_parts["shoe_" + side] = _capsule(shoes, 0.055)
-		_parts["upper_arm_" + side] = _capsule(_shirt, 0.06)
-		_parts["forearm_" + side] = _capsule(skin, 0.045)
-	_parts["pelvis"] = _capsule(trousers, 0.15)
-	_parts["torso"] = _capsule(_shirt, 0.17)
-	_parts["chest"] = _capsule(_shirt, 0.11)
+		# Slacks: full in the thigh, tapering to the ankle.
+		_parts["thigh_" + side] = _capsule(trousers, 0.095)
+		_parts["shin_" + side] = _capsule(trousers, 0.075)
+		_parts["shoe_" + side] = _capsule(shoes, 0.058)
+		# Long sleeves: the jumper runs down to the wrist.
+		_parts["upper_arm_" + side] = _capsule(_shirt, 0.068)
+		_parts["forearm_" + side] = _capsule(_shirt, 0.055)
+		_parts["wrist_" + side] = _sphere(skin, 0.035)
+	_parts["pelvis"] = _capsule(trousers, 0.16)
+	_parts["torso"] = _capsule(_shirt, 0.19)
+	_parts["chest"] = _capsule(_shirt, 0.085)
 	_parts["neck"] = _capsule(skin, 0.05)
+	var ring := TorusMesh.new()
+	ring.inner_radius = 0.045
+	ring.outer_radius = 0.075
+	_parts["collar"] = MeshInstance3D.new()
+	_parts["collar"].mesh = ring
+	_parts["collar"].material_override = collar
+	add_child(_parts["collar"])
 	_parts["head"] = _sphere(skin, 0.105)
 	_parts["hair"] = _sphere(hair, 0.1)
 	_parts["cap"] = _sphere(cap, 0.11)
@@ -70,14 +91,16 @@ func _ready() -> void:
 	_parts["grip"] = _capsule(grip, 0.016)
 	_parts["shaft"] = _capsule(steel, 0.009)
 	_parts["clubhead"] = _box(_mat(Color(0.14, 0.14, 0.16)))
-	_shirt.albedo_color = Color(0.85, 0.15, 0.15)
+	_shirt.albedo_color = JUMPER
+	_shirt.roughness = 0.95
 
 
 ## Stands the golfer at the ball, aimed along heading, holding the club.
 ## ball_position: -1 back, 0 centre, 1 forward in the stance.
-func address(ball: Vector3, heading: float, club: int, ball_position: int, shirt: Color, stance := 0) -> void:
+## colour: the player's colour, worn on the cap.
+func address(ball: Vector3, heading: float, club: int, ball_position: int, colour: Color, stance := 0) -> void:
 	_stance = stance
-	_shirt.albedo_color = shirt.darkened(0.1) if shirt.v > 0.9 else shirt
+	_cap.albedo_color = colour.darkened(0.04) if colour.v > 0.9 else colour
 	_putter = club == Clubs.PUTTER
 	var d := Vector3(sin(heading), 0.0, cos(heading))
 	var towards_ball := d.cross(Vector3.UP)
@@ -172,11 +195,16 @@ func _pose() -> void:
 
 	# Body: pelvis across the hips, torso and chest up the tilted spine.
 	_limb(_parts["pelvis"], hips + hip_yaw * Vector3(-0.11, 0, 0), hips + hip_yaw * Vector3(0.11, 0, 0))
-	_limb(_parts["torso"], hips + spine * 0.05, hips + yaw * (spine * (SPINE * 0.62)), 1.25)
-	var l_shoulder := chest + yaw * Vector3(0.18, -0.03, 0.0)
-	var r_shoulder := chest + yaw * Vector3(-0.18, -0.03, 0.0)
-	_limb(_parts["chest"], r_shoulder, l_shoulder)
+	_limb(_parts["torso"], hips + spine * 0.05, hips + yaw * (spine * (SPINE * 0.8)), 1.2)
+	var l_shoulder := chest + yaw * Vector3(0.17, -0.04, 0.0)
+	var r_shoulder := chest + yaw * Vector3(-0.17, -0.04, 0.0)
+	# Shoulders: a slim bar tucked into the top of the torso.
+	_limb(_parts["chest"], r_shoulder.lerp(l_shoulder, 0.08), l_shoulder.lerp(r_shoulder, 0.08))
 	_limb(_parts["neck"], chest, neck_top)
+	# The white collar of the shirt under the jumper, round the base of the neck.
+	var up := (neck_top - chest).normalized()
+	var neck_base := chest.lerp(neck_top, 0.3)
+	_parts["collar"].transform = Transform3D(Basis(Quaternion(Vector3.UP, up)), neck_base)
 	var head := neck_top + spine * 0.1 + Vector3(0, 0.04, 0)
 	_place(_parts["head"], head)
 	_place(_parts["hair"], head + Vector3(0, -0.01, -0.03))
@@ -196,7 +224,10 @@ func _pose() -> void:
 		# Elbows point down and slightly out from the body.
 		var elbow := _ik(shoulder, hands, UPPER_ARM, FOREARM, Vector3(side * 0.6, -1.0, 0.2))
 		_limb(_parts["upper_arm_" + key], shoulder, elbow)
-		_limb(_parts["forearm_" + key], elbow, hands)
+		# Sleeve to just short of the glove, with a little skin at the wrist.
+		var wrist := elbow.lerp(hands, 0.86)
+		_limb(_parts["forearm_" + key], elbow, wrist)
+		_place(_parts["wrist_" + key], wrist.lerp(hands, 0.5))
 	_place(_parts["hands"], hands)
 	_limb(_parts["grip"], hands - shaft * 0.04, hands + shaft * 0.16)
 	_limb(_parts["shaft"], hands, head_pos)

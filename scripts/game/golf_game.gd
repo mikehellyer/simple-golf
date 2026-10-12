@@ -1785,8 +1785,8 @@ func _place_meter() -> void:
 func _place_golfer() -> void:
 	if _ball == null or state == State.SWING or state == State.FLIGHT:
 		return
-	var shirt := _hitter.colour if _hitter else Color.WHITE
-	_golfer.address(_ball.pos, heading, club, int(_setup.ball_position), shirt, int(_setup.get("stance", 0)))
+	var cap_colour := _hitter.colour if _hitter else Color.WHITE
+	_golfer.address(_ball.pos, heading, club, int(_setup.ball_position), cap_colour, int(_setup.get("stance", 0)))
 	_golfer.visible = club != Clubs.PUTTER
 
 
