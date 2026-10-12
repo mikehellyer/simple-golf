@@ -39,6 +39,7 @@ func _init() -> void:
 	test_lies()
 	test_green_speeds()
 	test_stances()
+	test_pad_map()
 	print("\n%d passed, %d failed" % [_passes, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -651,3 +652,15 @@ func test_stances() -> void:
 	check(closed.path[closed.path.size() / 4].x < -0.5 and closed.rest.x > 0.0, "closed: starts right, draws back left")
 	check(drive.call(-1).rest.x > open.rest.x, "semi-open curves less than open")
 	check(absf(open.rest.x) < 12.0, "an open stance shapes the drive, not a wild miss (%.1f m)" % open.rest.x)
+
+
+func test_pad_map() -> void:
+	check(PadMap.command(JOY_BUTTON_A, false) == "swing", "A swings")
+	check(PadMap.command(JOY_BUTTON_LEFT_SHOULDER, false) == "ball"
+			and PadMap.command(JOY_BUTTON_LEFT_SHOULDER, true) == "rotate_left", "shoulders rotate the hole map")
+	var commands := {}
+	for b in PadMap.BUTTONS:
+		commands[PadMap.BUTTONS[b]] = true
+	check(commands.size() == PadMap.BUTTONS.size(), "every pad button does something different")
+	check(PadMap.axis(0.1) == 0.0 and PadMap.axis(-0.15) == 0.0, "stick drift inside the dead zone is ignored")
+	check(is_equal_approx(PadMap.axis(1.0), 1.0) and is_equal_approx(PadMap.axis(-1.0), -1.0), "full stick is full aim")

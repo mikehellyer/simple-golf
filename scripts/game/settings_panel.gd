@@ -13,6 +13,7 @@ var _restart: Button
 var _note: Label
 var _updates: CheckBox
 var _map_first: CheckBox
+var _pads: Label
 
 
 func _ready() -> void:
@@ -51,6 +52,30 @@ func _ready() -> void:
 	_updates.toggled.connect(func(_on: bool) -> void: _on_changed())
 	box.add_child(_updates)
 
+	box.add_child(HSeparator.new())
+	var pad_title := Label.new()
+	pad_title.text = "Controller"
+	pad_title.add_theme_font_size_override("font_size", 18)
+	box.add_child(pad_title)
+	_pads = Label.new()
+	_pads.modulate = Color(1, 1, 1, 0.75)
+	box.add_child(_pads)
+	var legend := GridContainer.new()
+	legend.columns = 2
+	legend.add_theme_constant_override("h_separation", 14)
+	for row in PadMap.LEGEND:
+		var k := Label.new()
+		k.text = row[0]
+		k.add_theme_font_size_override("font_size", 13)
+		k.add_theme_color_override("font_color", Color(0.95, 0.82, 0.45))
+		legend.add_child(k)
+		var v := Label.new()
+		v.text = row[1]
+		v.add_theme_font_size_override("font_size", 13)
+		legend.add_child(v)
+	box.add_child(legend)
+	Input.joy_connection_changed.connect(func(_d: int, _c: bool) -> void: _refresh_pads())
+
 	var help := Label.new()
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	help.modulate = Color(1, 1, 1, 0.55)
@@ -62,7 +87,16 @@ func _ready() -> void:
 		o.item_selected.connect(func(_i: int) -> void: _on_changed())
 
 
+func _refresh_pads() -> void:
+	var names := PackedStringArray()
+	for d in Input.get_connected_joypads():
+		names.append(Input.get_joy_name(d))
+	_pads.text = "Connected: " + ", ".join(names) if not names.is_empty() \
+			else "No controller connected. Plug in a gamepad or joystick at any time."
+
+
 func open(s: GraphicsSettings) -> void:
+	_refresh_pads()
 	settings = s
 	_shadows.select(s.shadows)
 	_aa.select(s.anti_aliasing)

@@ -120,6 +120,14 @@ the game.
 | Esc | Cancel a swing; press twice to leave the round |
 | U | Open the download page when an update is available |
 
+**Gamepad / joystick:** any standard controller (Xbox, PlayStation or a USB
+joystick) can play the whole game. A swings (and proceeds from the map), the
+left stick aims (right stick for fine aim), the D-pad changes club and moves
+the ball along the tee, X/Y/LB/RB set tee height, stance, ball position and
+the flight view, Start opens the hole map and Back the scorecard. The full
+layout is in **Settings**, which also lists connected controllers. Menus
+work with the D-pad and A/B as usual.
+
 **The swing meter** works like the original. The first click starts the
 backswing. The second click sets power; going past 100% into the red adds
 distance but magnifies any timing error. The third click, on the downswing,

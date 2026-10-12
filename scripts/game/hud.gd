@@ -282,8 +282,12 @@ func show_message(text: String) -> void:
 	_message.text = text
 
 
+## True while a gamepad was the last thing used: hints name its buttons.
+var pad_mode := false
+
+
 func set_hint(text: String) -> void:
-	_hint.text = text
+	_hint.text = text.replace("Space", "A") if pad_mode else text
 
 
 func show_update(version: String) -> void:

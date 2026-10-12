@@ -177,6 +177,11 @@ func _ready() -> void:
 	_hud.shot_panel.camera_pressed.connect(_cycle_camera)
 	_hud.shot_panel.stance_pressed.connect(_cycle_stance)
 	_hud.map_rotate_pressed.connect(_rotate_iso)
+	Input.joy_connection_changed.connect(func(device: int, connected: bool) -> void:
+		if connected:
+			_hud.show_message("Controller connected:\n%s" % Input.get_joy_name(device))
+		else:
+			_hud.show_message("Controller disconnected"))
 	_hud.shot_panel.view180_pressed.connect(_toggle_view180)
 	_hud.shot_panel.grid_pressed.connect(_toggle_grid)
 	_hud.shot_panel.speed_pressed.connect(_show_green_speed)
@@ -1002,7 +1007,16 @@ func _set_state(s: State) -> void:
 # --- Input -----------------------------------------------------------------
 
 func _unhandled_input(event: InputEvent) -> void:
+	# Hints follow whichever controls were used last.
+	if event is InputEventJoypadButton or (event is InputEventJoypadMotion and absf(event.axis_value) > 0.5):
+		_set_pad_mode(true)
+	elif event is InputEventKey or event is InputEventMouseButton:
+		_set_pad_mode(false)
 	if state in [State.MENU, State.LOBBY, State.EDITOR]:
+		return
+	if event is InputEventJoypadButton:
+		if event.pressed:
+			_pad_command(PadMap.command(event.button_index, _iso and state == State.AIM))
 		return
 	if event is InputEventMouseButton:
 		if not event.pressed:
@@ -1066,23 +1080,72 @@ func _unhandled_input(event: InputEvent) -> void:
 			if _update_url != "":
 				OS.shell_open(_update_url)
 		KEY_TAB:
-			if state != State.HOLE_DONE and state != State.ROUND_DONE:
-				if _hud.scorecard.visible:
-					_hud.scorecard.visible = false
-				else:
-					_show_card("Scorecard", hole.number)
+			_toggle_card()
 		KEY_G:
 			_toggle_grid()
 		KEY_N:
 			_hud.show_message("Sound off" if _sfx.toggle_mute() else "Sound on")
 		KEY_ESCAPE:
-			if state == State.SWING and _human_controls() and not _swung_locally and not _replaying:
-				_set_state(State.AIM)
-			elif Time.get_ticks_msec() / 1000.0 - _quit_armed_at < 2.5:
-				_show_menu()
+			_escape()
+
+
+## Esc (or the pad's B): cancel a swing, or press twice to leave the round.
+func _escape() -> void:
+	if state == State.SWING and _human_controls() and not _swung_locally and not _replaying:
+		_set_state(State.AIM)
+	elif Time.get_ticks_msec() / 1000.0 - _quit_armed_at < 2.5:
+		_show_menu()
+	else:
+		_quit_armed_at = Time.get_ticks_msec() / 1000.0
+		_hud.show_message("Press %s again to leave the round" % ("B" if _hud.pad_mode else "Esc"))
+
+
+func _toggle_card() -> void:
+	if state != State.HOLE_DONE and state != State.ROUND_DONE:
+		if _hud.scorecard.visible:
+			_hud.scorecard.visible = false
+		else:
+			_show_card("Scorecard", hole.number)
+
+
+## A gamepad / joystick button (see PadMap for the layout).
+func _pad_command(cmd: String) -> void:
+	match cmd:
+		"swing":
+			if _iso and state == State.AIM:
+				_show_iso(false)
 			else:
-				_quit_armed_at = Time.get_ticks_msec() / 1000.0
-				_hud.show_message("Press Esc again to leave the round")
+				_action()
+		"cancel":
+			_escape()
+		"tee":
+			_cycle_tee_height()
+		"stance":
+			_cycle_stance()
+		"ball":
+			_cycle_ball_position()
+		"view":
+			_cycle_camera()
+		"club_up":
+			_change_club(-1)
+		"club_down":
+			_change_club(1)
+		"tee_left":
+			_move_on_tee(1)
+		"tee_right":
+			_move_on_tee(-1)
+		"map":
+			_show_iso(not _iso)
+		"card":
+			_toggle_card()
+		"view180":
+			_toggle_view180()
+		"grid":
+			_toggle_grid()
+		"rotate_left":
+			_rotate_iso(-1)
+		"rotate_right":
+			_rotate_iso(1)
 
 
 func _action() -> void:
@@ -1295,7 +1358,22 @@ func _update_aim_arc() -> void:
 	mesh.surface_end()
 
 
+func _set_pad_mode(on: bool) -> void:
+	if _hud.pad_mode == on:
+		return
+	_hud.pad_mode = on
+	_set_hint_for_state()
+
+
 func _set_hint_for_state() -> void:
+	if _hud.pad_mode and state == State.AIM and _human_controls():
+		if _iso:
+			_hud.set_hint("Left stick: aim  ·  D-pad ↑/↓: club  ·  LB/RB: rotate  ·  A: proceed  ·  Start: close map")
+		elif club == Clubs.PUTTER:
+			_hud.set_hint("Left stick: aim (right stick: fine)  ·  A: start the putt  ·  L-stick click: view from the hole  ·  R-stick click: gridlines")
+		else:
+			_hud.set_hint("Left stick: aim  ·  D-pad ↑/↓: club  ·  A: swing  ·  X tee  ·  Y stance  ·  LB ball  ·  RB view  ·  Start: map")
+		return
 	if _iso and state == State.AIM and _human_controls():
 		_hud.set_hint("Click to aim  ·  right-click: at the flag  ·  ↑/↓ club  ·  Q/E rotate  ·  Space or Proceed: to the shot  ·  M map")
 	elif state == State.AIM and _human_controls() and club == Clubs.PUTTER:
@@ -1462,15 +1540,24 @@ func _handle_aim_keys(delta: float) -> void:
 		turn += 1.0
 	if Input.is_key_pressed(KEY_RIGHT):
 		turn -= 1.0
+	if Input.is_key_pressed(KEY_SHIFT):
+		turn *= 0.25
+	# Gamepad: left stick aims, right stick aims finely (stick right = aim right).
+	var devices := Input.get_connected_joypads()
+	if not 0 in devices:
+		devices.append(0)
+	for device in devices:
+		turn -= PadMap.axis(Input.get_joy_axis(device, JOY_AXIS_LEFT_X))
+		turn -= PadMap.axis(Input.get_joy_axis(device, JOY_AXIS_RIGHT_X)) * PadMap.FINE_AIM
 	if turn == 0.0:
 		return
 	var rate := AIM_RATE
 	if club == Clubs.PUTTER:
 		rate *= 0.2
-	if Input.is_key_pressed(KEY_SHIFT):
-		rate *= 0.25
-	heading += turn * rate * delta
+	heading += clampf(turn, -1.0, 1.0) * rate * delta
 	_aim_changed()
+	if _iso:
+		_iso_aim = _marker.position
 
 
 func _advance_flight(delta: float) -> void:
