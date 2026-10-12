@@ -34,6 +34,7 @@ func _init() -> void:
 	test_society_addresses()
 	test_real_course()
 	test_shot_setup()
+	test_golfer()
 	print("\n%d passed, %d failed" % [_passes, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -529,3 +530,23 @@ func test_shot_setup() -> void:
 	var forward: BallPhysics.Result = iron.call(1)
 	check(back.apex < centre.apex and centre.apex < forward.apex, "ball back flies lower, forward higher")
 	check(back.apex < centre.apex * 0.85, "ball back is a proper low punch (apex %.0f vs %.0f m)" % [back.apex, centre.apex])
+
+
+func test_golfer() -> void:
+	var g := Golfer.new()
+	g._ready()
+	var ball := Vector3(12.0, 3.0, -40.0)
+	for club in [Clubs.DRIVER, 7, Clubs.SAND_WEDGE, Clubs.PUTTER]:
+		for pos in [-1, 0, 1]:
+			g.address(ball, 0.7, club, pos, Color.RED)
+			var head: Vector3 = g.transform * g._parts["clubhead"].position
+			check(head.distance_to(ball) < 0.06, "%s, ball %d: club head at the ball (%.2f m away)" % [
+					Clubs.club_name(club), pos, head.distance_to(ball)])
+	g.address(ball, 0.0, Clubs.DRIVER, 0, Color.RED)
+	g.follow_meter(SwingMeter.Phase.BACKSWING, 1.0, 0.0, 0.016)
+	var top: Vector3 = g.transform * g._parts["clubhead"].position
+	check(top.y > ball.y + 1.5, "at the top of a full swing the club is up behind the head")
+	g.follow_meter(SwingMeter.Phase.DOWNSWING, 0.0, 1.0, 0.016)
+	var impact: Vector3 = g.transform * g._parts["clubhead"].position
+	check(impact.distance_to(ball) < 0.15, "back at the ball at impact (%.2f m)" % impact.distance_to(ball))
+	g.free()

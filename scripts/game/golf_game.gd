@@ -95,6 +95,7 @@ var _sfx: Sfx
 var _camera: Camera3D
 var _map_camera: Camera3D
 var _marker: MeshInstance3D
+var _golfer: Golfer
 var _aim_line: MeshInstance3D
 var _trail: MeshInstance3D
 var _map_pin: MeshInstance3D
@@ -910,6 +911,8 @@ func _set_state(s: State) -> void:
 	_trail.visible = s == State.FLIGHT or s == State.RESULT
 	_hud.set_meter_visible(aiming or s == State.FLIGHT)
 	_hud.shot_panel.visible = aiming and mine
+	if s in [State.MENU, State.LOBBY, State.EDITOR, State.HOLE_DONE, State.ROUND_DONE]:
+		_golfer.visible = false
 	if aiming and mine:
 		_update_shot_panel()
 	_update_green_grid()
@@ -1149,7 +1152,9 @@ func _process(delta: float) -> void:
 			_aim_camera()
 		State.SWING:
 			_aim_camera()
+			_golfer.follow_meter(_hud.meter.phase, _hud.meter.value, _hud.meter.power, delta)
 		State.FLIGHT:
+			_golfer.follow_meter(_hud.meter.phase, _hud.meter.value, _hud.meter.power, delta)
 			_advance_flight(delta)
 		State.RESULT:
 			if _is_authority() and state_time > RESULT_TIME and _everyone_caught_up():
@@ -1281,11 +1286,15 @@ func _play_shot_events() -> void:
 func _aim_camera() -> void:
 	var dir := _dir(heading)
 	if club == Clubs.PUTTER:
-		_cam_target = _ball.pos - dir * 3.5 + Vector3.UP * 1.4
-		_cam_look = _ball.pos + dir * 6.0
+		# Back and a little to the side, so the golfer doesn't block the line.
+		var side := Vector3(cos(heading), 0.0, -sin(heading))
+		_cam_target = _ball.pos - dir * 3.2 - side * 1.0 + Vector3.UP * 1.5
+		_cam_look = _ball.pos + dir * 5.0
 	else:
-		_cam_target = _ball.pos - dir * 9.0 + Vector3.UP * 4.5
-		_cam_look = _ball.pos + dir * 60.0
+		# Close behind the golfer, as in the original, so the swing fills the
+		# middle of the screen above the meter.
+		_cam_target = _ball.pos - dir * 6.0 + Vector3.UP * 2.2
+		_cam_look = _ball.pos + dir * 20.0 + Vector3.UP * 0.5
 	_cam_target.y = maxf(_cam_target.y, hole.height_at(_cam_target.x, _cam_target.z) + 1.0)
 
 
@@ -1355,7 +1364,17 @@ func _reach() -> float:
 	return Aim.reach(club, _ball.lie, Aim.flat_distance(_ball.pos, hole.pin))
 
 
+## Stands the golfer at the ball about to be played, aimed and holding the club.
+func _place_golfer() -> void:
+	if _ball == null or state == State.SWING or state == State.FLIGHT:
+		return
+	var shirt := _hitter.colour if _hitter else Color.WHITE
+	_golfer.address(_ball.pos, heading, club, int(_setup.ball_position), shirt)
+	_golfer.visible = true
+
+
 func _update_aim() -> void:
+	_place_golfer()
 	var dir := _dir(heading)
 	var reach := _reach()
 	var target := _ball.pos + dir * reach
@@ -1530,6 +1549,10 @@ func _build_world() -> void:
 	map_env.fog_enabled = false
 	_map_camera.environment = map_env
 	add_child(_map_camera)
+
+	_golfer = Golfer.new()
+	_golfer.visible = false
+	add_child(_golfer)
 
 	var ring := TorusMesh.new()
 	ring.inner_radius = 1.6
