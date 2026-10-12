@@ -115,6 +115,13 @@ var _pending_setup := {}
 ## ShotPanel.CAMERAS), as in the original's five camera positions.
 var _camera_choice := {}
 var _side_cam := Vector3.ZERO
+## The isometric hole map (as in the original): on screen, its rotation in
+## quarter turns, the point last clicked to aim at, and the flight preview.
+var _iso := false
+var _iso_turn := 0
+var _iso_aim := Vector3.ZERO
+var _aim_arc: MeshInstance3D
+var _arc_dirty := false
 ## Host: a shot for this turn has been decided and sent; don't decide again.
 var _decided := false
 ## Host: peers that have finished watching the current shot.
@@ -165,6 +172,8 @@ func _ready() -> void:
 	_hud.shot_panel.ball_position_pressed.connect(_cycle_ball_position)
 	_hud.shot_panel.tee_move_pressed.connect(_move_on_tee)
 	_hud.shot_panel.camera_pressed.connect(_cycle_camera)
+	_hud.map_rotate_pressed.connect(_rotate_iso)
+	_hud.map_proceed_pressed.connect(func() -> void: _show_iso(false))
 	_hud.meter.clicked.connect(func() -> void: _sfx.play("tick", -6.0))
 	_sfx = Sfx.new()
 	add_child(_sfx)
@@ -237,6 +246,9 @@ func _arg(key: String, default: String) -> String:
 func _show_menu(status := "") -> void:
 	if _net.is_online():
 		_net.leave()
+	_iso = false
+	_aim_arc.visible = false
+	_hud.map_controls.visible = false
 	_set_state(State.MENU)
 	_hud.visible = false
 	_lobby.visible = false
@@ -726,6 +738,7 @@ func _begin_turn(ball_index: int) -> void:
 	_swung_locally = false
 	_replaying = false
 	_decided = false
+	_iso_aim = Vector3.ZERO
 	_setup = {tee_height = 1, ball_position = 0, tee_x = _ball.pos.x if _on_tee_box(_ball) else 0.0}
 	var dist := Aim.flat_distance(_ball.pos, hole.pin)
 	club = Aim.pick_club(dist, _ball.lie)
@@ -734,6 +747,9 @@ func _begin_turn(ball_index: int) -> void:
 	_update_aim()
 	_update_hud()
 	_set_state(State.AIM)
+	# Each full shot starts on the hole map, as in the original (optional).
+	var start_on_map := _graphics.map_first and _human_controls() and club != Clubs.PUTTER
+	_show_iso(start_on_map)
 	if comp.players.size() > 1:
 		_hud.show_message("%s to play" % _hitter.name)
 
@@ -928,8 +944,8 @@ func _set_state(s: State) -> void:
 	_aim_line.visible = aiming
 	_map_target.visible = aiming
 	_trail.visible = s == State.FLIGHT or s == State.RESULT
-	_hud.set_meter_visible(aiming or s == State.FLIGHT)
-	_hud.shot_panel.visible = aiming and mine
+	_hud.set_meter_visible((aiming or s == State.FLIGHT) and not _iso)
+	_hud.shot_panel.visible = aiming and mine and not _iso
 	if s in [State.MENU, State.LOBBY, State.EDITOR, State.HOLE_DONE, State.ROUND_DONE]:
 		_golfer.visible = false
 	if aiming and mine:
@@ -943,6 +959,9 @@ func _set_state(s: State) -> void:
 			_hud.set_hint("Space: skip fly-by" if host else "")
 		State.AIM:
 			_hud.meter.reset()
+			if _iso and mine:
+				_set_hint_for_state()
+				return
 			if mine:
 				_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  SWING or Space  ·  T tee  ·  B ball  ·  [ ] move on tee  ·  C view  ·  M map  ·  Tab card")
 			elif _hitter.is_cpu():
@@ -973,16 +992,31 @@ func _unhandled_input(event: InputEvent) -> void:
 	if state in [State.MENU, State.LOBBY, State.EDITOR]:
 		return
 	if event is InputEventMouseButton:
+		if not event.pressed:
+			return
+		# On the hole map, a click aims there; a right-click aims at the flag.
+		if _iso and state == State.AIM and _human_controls():
+			if event.button_index == MOUSE_BUTTON_LEFT:
+				_aim_on_map(event.position)
+			elif event.button_index == MOUSE_BUTTON_RIGHT:
+				_iso_aim = hole.pin
+				heading = Aim.heading_to(_ball.pos, hole.pin)
+				_aim_changed()
+			return
 		# Clicking the course skips and moves things on, but never swings:
 		# that's what the SWING button is for.
-		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT and state != State.AIM and state != State.SWING:
+		if event.button_index == MOUSE_BUTTON_LEFT and state != State.AIM and state != State.SWING:
 			_action()
 		return
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	match event.keycode:
 		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
-			_action()
+			# On the hole map, Space "proceeds" to the shot view first.
+			if _iso and state == State.AIM:
+				_show_iso(false)
+			else:
+				_action()
 		KEY_C:
 			_cycle_camera()
 		KEY_T:
@@ -998,10 +1032,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_DOWN:
 			_change_club(1)
 		KEY_M:
-			if _map_camera.current:
-				_camera.make_current()
-			else:
-				_map_camera.make_current()
+			_show_iso(not _iso)
+		KEY_Q:
+			_rotate_iso(-1)
+		KEY_E:
+			_rotate_iso(1)
 		KEY_R:
 			if state == State.AIM and _human_controls():
 				heading = Aim.heading_to(_ball.pos, hole.pin)
@@ -1093,8 +1128,131 @@ func _update_shot_panel() -> void:
 
 ## The SWING button: the same as pressing Space.
 func _swing_pressed() -> void:
-	if state == State.AIM or state == State.SWING:
+	if _iso and state == State.AIM:
+		_show_iso(false)
+	elif state == State.AIM or state == State.SWING:
 		_action()
+
+
+# --- The isometric hole map ---------------------------------------------------
+
+func _show_iso(on: bool) -> void:
+	if state in [State.MENU, State.LOBBY, State.EDITOR] or hole == null:
+		return
+	_iso = on
+	if on:
+		_setup_iso_camera()
+		_map_camera.make_current()
+		if _iso_aim == Vector3.ZERO and _ball:
+			_iso_aim = _marker.position
+		_arc_dirty = true
+	else:
+		_camera.make_current()
+	_aim_arc.visible = on and (state == State.AIM or state == State.SWING)
+	_hud.set_meter_visible((state == State.AIM or state == State.SWING or state == State.FLIGHT) and not on)
+	_hud.shot_panel.visible = not on and (state == State.AIM or state == State.SWING) and _human_controls()
+	if _hud.shot_panel.visible:
+		_update_shot_panel()
+	_hud.map_controls.visible = on and state == State.AIM and _human_controls()
+	_set_hint_for_state()
+	if _ball:
+		_update_hud()
+
+
+func _rotate_iso(step := 1) -> void:
+	if not _iso:
+		return
+	_iso_turn = posmod(_iso_turn + step, 4)
+	_setup_iso_camera()
+
+
+## An angled overhead view of the whole hole, from behind the tee, turned in
+## quarter turns, and zoomed to fit.
+func _setup_iso_camera() -> void:
+	var c := hole.bounds.get_center()
+	var axis := atan2(hole.green_centre.x, hole.green_centre.y)
+	var yaw := axis + deg_to_rad(35.0) + _iso_turn * PI * 0.5
+	var pitch := deg_to_rad(38.0)
+	var forward := Vector3(sin(yaw) * cos(pitch), -sin(pitch), cos(yaw) * cos(pitch))
+	var centre := Vector3(c.x, hole.height_at(c.x, c.y), c.y)
+	var basis := Basis.looking_at(forward, Vector3.UP)
+	_map_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	_map_camera.h_offset = 0.0
+	_map_camera.far = 3000.0
+	_map_camera.transform = Transform3D(basis, centre - forward * 1000.0)
+	# Fit the hole's corners on screen.
+	var view := get_viewport().get_visible_rect().size
+	var aspect := view.x / maxf(view.y, 1.0)
+	var half := 0.0
+	var r := hole.bounds.grow(-15.0)
+	for corner in [r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)]:
+		var local := basis.inverse() * (Vector3(corner.x, hole.height_at(corner.x, corner.y), corner.y) - centre)
+		half = maxf(half, maxf(absf(local.y), absf(local.x) / aspect))
+	_map_camera.size = half * 2.15
+	var marker := _map_camera.size / 110.0
+	for b in _balls:
+		b.map_marker.scale = Vector3.ONE * marker / 3.0
+	_map_pin.scale = Vector3.ONE * marker / 3.0
+	_map_target.scale = Vector3.ONE * marker / 3.0
+
+
+## Aims at the ground under the mouse, as when clicking on the original's map.
+func _aim_on_map(screen: Vector2) -> void:
+	var origin := _map_camera.project_ray_origin(screen)
+	var dir := _map_camera.project_ray_normal(screen)
+	# March down the ray to the ground, then refine.
+	var t := 0.0
+	var prev := 0.0
+	var hit := false
+	while t < 4000.0:
+		var p := origin + dir * t
+		if p.y <= hole.height_at(p.x, p.z):
+			hit = true
+			break
+		prev = t
+		t += 4.0
+	if not hit:
+		return
+	for i in 12:
+		var mid := (prev + t) * 0.5
+		var p := origin + dir * mid
+		if p.y <= hole.height_at(p.x, p.z):
+			t = mid
+		else:
+			prev = mid
+	var point := origin + dir * t
+	if Aim.flat_distance(point, _ball.pos) < 1.0:
+		return
+	_iso_aim = point
+	heading = Aim.heading_to(_ball.pos, point)
+	_aim_changed()
+
+
+## The white arc on the map: where a full, pure strike with this club goes
+## (no wind), as the original draws it.
+func _update_aim_arc() -> void:
+	_arc_dirty = false
+	var mesh: ImmediateMesh = _aim_arc.mesh
+	mesh.clear_surfaces()
+	if _ball == null or club == Clubs.PUTTER:
+		return
+	var setup := _setup.duplicate()
+	setup.lie_quality = _ball.quality
+	var launch := Clubs.launch_for(club, _ball.pos, heading, 1.0, 0.0, _ball.lie, _putt_speed, setup)
+	var r := BallPhysics.simulate(launch, hole)
+	if r.path.size() < 2:
+		return
+	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	for p in r.path:
+		mesh.surface_add_vertex(p + Vector3.UP * 0.3)
+	mesh.surface_end()
+
+
+func _set_hint_for_state() -> void:
+	if _iso and state == State.AIM and _human_controls():
+		_hud.set_hint("Click to aim  ·  right-click: at the flag  ·  ↑/↓ club  ·  Q/E rotate  ·  Space or Proceed: to the shot  ·  M map")
+	elif state == State.AIM and _human_controls():
+		_hud.set_hint("←/→ aim  ·  ↑/↓ club  ·  SWING or Space  ·  T tee  ·  B ball  ·  [ ] move on tee  ·  C view  ·  M map  ·  Tab card")
 
 
 ## The flight view for whoever is playing: TV (1) unless they've chosen another.
@@ -1200,6 +1358,8 @@ func _process(delta: float) -> void:
 			if _is_authority() and _no_humans_here() and state_time > AUTO_ADVANCE_TIME:
 				_action()
 	_move_camera(delta)
+	if _iso and _arc_dirty and state == State.AIM:
+		_update_aim_arc()
 	_place_meter()
 	for b in _balls:
 		b.mesh.scale = Vector3.ONE * maxf(1.0, _camera.global_position.distance_to(b.mesh.position) / 30.0)
@@ -1475,6 +1635,8 @@ func _update_aim() -> void:
 	_marker.position = target + Vector3.UP * 0.1
 	_marker.scale = Vector3.ONE * (0.12 if club == Clubs.PUTTER else clampf(reach / 60.0, 0.5, 3.0))
 	_map_target.position = target
+	if _iso:
+		_arc_dirty = true
 
 	var mesh: ImmediateMesh = _aim_line.mesh
 	mesh.clear_surfaces()
@@ -1508,6 +1670,8 @@ func _update_hud() -> void:
 	if _ball.quality != Lie.default_for(_ball.lie) or _ball.lie in [Surface.ROUGH, Surface.BUNKER]:
 		lie_text += " (%s)" % Lie.NAMES[_ball.quality].to_lower()
 	lines.append("Lie: %s" % lie_text)
+	if _iso and _iso_aim != Vector3.ZERO and club != Clubs.PUTTER:
+		lines.append("Aim: %d yds" % roundi(Aim.flat_distance(_ball.pos, _iso_aim) * YARDS))
 	_hud.set_lie(_ball.lie, _ball.quality)
 	if club == Clubs.PUTTER:
 		var full := _putt_speed * _putt_speed / (2.0 * Surface.ROLL_DECEL[Surface.GREEN])
@@ -1657,6 +1821,9 @@ func _build_world() -> void:
 	_marker = _overlay(ring, Color(1.0, 0.9, 0.2, 0.9))
 	_aim_line = _overlay(ImmediateMesh.new(), Color(1.0, 0.9, 0.2, 0.6))
 	_trail = _overlay(ImmediateMesh.new(), Color(1.0, 1.0, 1.0, 0.8))
+	_aim_arc = _overlay(ImmediateMesh.new(), Color(1.0, 1.0, 1.0, 0.95))
+	_aim_arc.layers = 1 << (MAP_LAYER - 1)
+	_aim_arc.visible = false
 	_map_pin = _map_marker(Color(0.95, 0.2, 0.2))
 	_map_target = _map_marker(Color(1.0, 0.9, 0.2))
 

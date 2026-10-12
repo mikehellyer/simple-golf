@@ -16,6 +16,8 @@ var anti_aliasing := 2
 var renderer := 0
 ## Not graphics, but saved alongside: ask GitHub for new versions at start.
 var check_updates := true
+## Start each full shot on the isometric hole map, as in the original.
+var map_first := true
 
 
 static func load_saved() -> GraphicsSettings:
@@ -26,6 +28,7 @@ static func load_saved() -> GraphicsSettings:
 	g.anti_aliasing = clampi(cfg.get_value("graphics", "anti_aliasing", 2), 0, ANTI_ALIASING.size() - 1)
 	g.renderer = clampi(cfg.get_value("graphics", "renderer", 0), 0, RENDERERS.size() - 1)
 	g.check_updates = cfg.get_value("general", "check_updates", true)
+	g.map_first = cfg.get_value("general", "map_first", true)
 	return g
 
 
@@ -37,6 +40,7 @@ func save() -> void:
 	cfg.set_value("graphics", "anti_aliasing", anti_aliasing)
 	cfg.set_value("graphics", "renderer", renderer)
 	cfg.set_value("general", "check_updates", check_updates)
+	cfg.set_value("general", "map_first", map_first)
 	cfg.save(SETTINGS_PATH)
 
 

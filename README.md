@@ -111,7 +111,7 @@ the game.
 | Space or left click | Swing: start, set power, set accuracy |
 | C | Flight view: Behind, TV, Side, Green or Overhead (each player keeps their own) |
 | T / B / [ ] | Tee height, ball position in the stance, move the ball along the tee |
-| M | Overhead map |
+| M | Isometric hole map: click to aim (right-click aims at the flag), Q/E rotate, Space or Proceed to the shot |
 | Tab | Scorecard |
 | G | Green slope grid on/off (shown when putting) |
 | N | Sound on/off |
@@ -125,6 +125,12 @@ backswing. The second click sets power; going past 100% into the red adds
 distance but magnifies any timing error. The third click, on the downswing,
 should land on the white line. Clicking early pushes and slices the ball to
 the right; clicking late pulls and hooks it to the left.
+
+**The hole map:** as in the original, each full shot starts on an
+isometric view of the hole. Click where you want to aim and a white arc shows
+where a full, pure strike with your club would go; the info panel gives the
+"Aim" distance. You can turn this off in **Settings**, and **M** opens the map
+at any time.
 
 **Lies:** as in the original, an icon shows how the ball is sitting:
 good, fluffy (sitting up in the rough: it flies and runs), poor, very poor,

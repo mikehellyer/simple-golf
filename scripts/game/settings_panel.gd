@@ -12,6 +12,7 @@ var _renderer: OptionButton
 var _restart: Button
 var _note: Label
 var _updates: CheckBox
+var _map_first: CheckBox
 
 
 func _ready() -> void:
@@ -41,6 +42,10 @@ func _ready() -> void:
 	box.add_child(_restart)
 
 	box.add_child(HSeparator.new())
+	_map_first = CheckBox.new()
+	_map_first.text = "Start each shot on the hole map (as in MicroProse Golf)"
+	_map_first.toggled.connect(func(_on: bool) -> void: _on_changed())
+	box.add_child(_map_first)
 	_updates = CheckBox.new()
 	_updates.text = "Check for updates when the game starts"
 	_updates.toggled.connect(func(_on: bool) -> void: _on_changed())
@@ -63,6 +68,7 @@ func open(s: GraphicsSettings) -> void:
 	_aa.select(s.anti_aliasing)
 	_renderer.select(s.renderer)
 	_updates.set_pressed_no_signal(s.check_updates)
+	_map_first.set_pressed_no_signal(s.map_first)
 	_update_note()
 
 
@@ -71,6 +77,7 @@ func _on_changed() -> void:
 	settings.anti_aliasing = _aa.selected
 	settings.renderer = _renderer.selected
 	settings.check_updates = _updates.button_pressed
+	settings.map_first = _map_first.button_pressed
 	settings.save()
 	_update_note()
 	changed.emit(settings)

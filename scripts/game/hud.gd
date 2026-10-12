@@ -63,7 +63,11 @@ class LieIcon:
 		draw_rect(r, Color(1, 1, 1, 0.5), false, 1.5)
 
 
+signal map_rotate_pressed
+signal map_proceed_pressed
+
 var meter: SwingMeter
+var map_controls: HBoxContainer
 var _lie_icon: LieIcon
 var _lie_label: Label
 var shot_panel: ShotPanel
@@ -148,6 +152,27 @@ func _ready() -> void:
 	shot_panel.offset_right = -16
 	shot_panel.visible = false
 	add_child(shot_panel)
+
+	map_controls = HBoxContainer.new()
+	map_controls.add_theme_constant_override("separation", 10)
+	map_controls.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	map_controls.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	map_controls.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	map_controls.offset_right = -16
+	map_controls.offset_bottom = -48
+	map_controls.visible = false
+	var rotate := Button.new()
+	rotate.text = "  ⟳ Rotate  "
+	rotate.focus_mode = Control.FOCUS_NONE
+	rotate.pressed.connect(func() -> void: map_rotate_pressed.emit())
+	map_controls.add_child(rotate)
+	var proceed := Button.new()
+	proceed.text = "  Proceed ➜  "
+	proceed.focus_mode = Control.FOCUS_NONE
+	proceed.add_theme_font_size_override("font_size", 22)
+	proceed.pressed.connect(func() -> void: map_proceed_pressed.emit())
+	map_controls.add_child(proceed)
+	add_child(map_controls)
 
 	_hint = _label(14)
 	_hint.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
