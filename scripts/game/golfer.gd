@@ -30,7 +30,10 @@ const ARM := 0.56
 
 var _parts := {}
 ## The classic red jumper, and the cap in the player's colour.
-const JUMPER := Color(0.78, 0.1, 0.1)
+const JUMPER := Color(0.8, 0.1, 0.1)
+## The golfer draws on its own render layer, so the game can show it in the
+## original's chunky pixel-art style (see golf_game.gd).
+const LAYER := 1 << 2
 var _shirt := StandardMaterial3D.new()
 var _cap := StandardMaterial3D.new()
 var _putter := false
@@ -50,19 +53,18 @@ var _stance := 0
 
 
 func _ready() -> void:
-	var skin := _mat(Color(0.93, 0.72, 0.58))
-	var trousers := _mat(Color(0.13, 0.12, 0.32))
+	# MicroProse's palette: red jumper, purple slacks, white cap, hair and shoes.
+	var skin := _mat(Color(0.95, 0.72, 0.58))
+	var trousers := _mat(Color(0.3, 0.17, 0.48))
 	var shoes := _mat(Color(0.97, 0.97, 0.97))
 	var glove := _mat(Color(0.98, 0.98, 0.98))
 	var collar := _mat(Color(0.97, 0.97, 0.97))
 	var cap := _cap
-	cap.roughness = 0.85
-	cap.albedo_color = Color(0.96, 0.96, 0.96)
-	var hair := _mat(Color(0.32, 0.22, 0.13))
-	var steel := _mat(Color(0.82, 0.82, 0.86))
-	steel.metallic = 0.85
-	steel.roughness = 0.25
-	var grip := _mat(Color(0.1, 0.1, 0.1))
+	_toon(cap)
+	cap.albedo_color = Color(0.97, 0.97, 0.97)
+	var hair := _mat(Color(0.92, 0.9, 0.86))
+	var steel := _mat(Color(0.86, 0.86, 0.9), false)
+	var grip := _mat(Color(0.1, 0.1, 0.1), false)
 	for side in ["l", "r"]:
 		# Slacks: full in the thigh, tapering to the ankle.
 		_parts["thigh_" + side] = _capsule(trousers, 0.095)
@@ -82,17 +84,18 @@ func _ready() -> void:
 	_parts["collar"] = MeshInstance3D.new()
 	_parts["collar"].mesh = ring
 	_parts["collar"].material_override = collar
+	_parts["collar"].layers = LAYER
 	add_child(_parts["collar"])
-	_parts["head"] = _sphere(skin, 0.105)
-	_parts["hair"] = _sphere(hair, 0.1)
-	_parts["cap"] = _sphere(cap, 0.11)
+	_parts["head"] = _sphere(skin, 0.115)
+	_parts["hair"] = _sphere(hair, 0.112)
+	_parts["cap"] = _sphere(cap, 0.12)
 	_parts["brim"] = _box(cap)
 	_parts["hands"] = _sphere(glove, 0.05)
 	_parts["grip"] = _capsule(grip, 0.016)
-	_parts["shaft"] = _capsule(steel, 0.009)
+	_parts["shaft"] = _capsule(steel, 0.014)
 	_parts["clubhead"] = _box(_mat(Color(0.14, 0.14, 0.16)))
 	_shirt.albedo_color = JUMPER
-	_shirt.roughness = 0.95
+	_toon(_shirt)
 
 
 ## Stands the golfer at the ball, aimed along heading, holding the club.
@@ -279,6 +282,7 @@ func _capsule(mat: Material, r: float) -> MeshInstance3D:
 	mi.mesh = mesh
 	mi.material_override = mat
 	mi.set_meta("radius", r)
+	mi.layers = LAYER
 	add_child(mi)
 	return mi
 
@@ -292,6 +296,7 @@ func _sphere(mat: Material, r: float) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
 	mi.material_override = mat
+	mi.layers = LAYER
 	add_child(mi)
 	return mi
 
@@ -302,12 +307,29 @@ func _box(mat: Material) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
 	mi.material_override = mat
+	mi.layers = LAYER
 	add_child(mi)
 	return mi
 
 
-static func _mat(colour: Color) -> StandardMaterial3D:
+static func _mat(colour: Color, outline := true) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_color = colour
-	m.roughness = 0.8
+	_toon(m, outline)
 	return m
+
+
+## Flat two-tone shading with a dark outline, like a sprite.
+static func _toon(m: StandardMaterial3D, outline := true) -> void:
+	m.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
+	m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	m.roughness = 1.0
+	m.metallic = 0.0
+	if outline:
+		var line := StandardMaterial3D.new()
+		line.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		line.albedo_color = Color(0.08, 0.06, 0.06)
+		line.cull_mode = BaseMaterial3D.CULL_FRONT
+		line.grow = true
+		line.grow_amount = 0.014
+		m.next_pass = line

@@ -98,6 +98,12 @@ var _camera: Camera3D
 var _map_camera: Camera3D
 var _marker: MeshInstance3D
 var _golfer: Golfer
+## The golfer is drawn on its own, small, and scaled up with hard pixel edges
+## so it looks like MicroProse Golf's sprite.
+var _pixel_view: SubViewport
+var _pixel_camera: Camera3D
+var _pixel_rect: TextureRect
+const PIXEL_SIZE := 3
 var _aim_line: MeshInstance3D
 var _trail: MeshInstance3D
 var _map_pin: MeshInstance3D
@@ -1494,6 +1500,7 @@ func _process(delta: float) -> void:
 			if _is_authority() and _no_humans_here() and state_time > AUTO_ADVANCE_TIME:
 				_action()
 	_move_camera(delta)
+	_sync_pixel_golfer()
 	if _iso and _arc_dirty and state == State.AIM:
 		_update_aim_arc()
 	_place_meter()
@@ -1970,10 +1977,11 @@ func _build_world() -> void:
 	_camera = Camera3D.new()
 	_camera.fov = 60.0
 	_camera.far = 3000.0
-	_camera.cull_mask = 0xFFFFF & ~(1 << (MAP_LAYER - 1))
+	_camera.cull_mask = 0xFFFFF & ~(1 << (MAP_LAYER - 1)) & ~Golfer.LAYER
 	add_child(_camera)
 	_camera.make_current()
 	_map_camera = Camera3D.new()
+	_map_camera.cull_mask = 0xFFFFF & ~Golfer.LAYER
 	var map_env: Environment = env.duplicate()
 	map_env.fog_enabled = false
 	_map_camera.environment = map_env
@@ -1982,6 +1990,7 @@ func _build_world() -> void:
 	_golfer = Golfer.new()
 	_golfer.visible = false
 	add_child(_golfer)
+	_build_pixel_golfer_view(env)
 
 	var ring := TorusMesh.new()
 	ring.inner_radius = 1.6
@@ -1994,6 +2003,58 @@ func _build_world() -> void:
 	_aim_arc.visible = false
 	_map_pin = _map_marker(Color(0.95, 0.2, 0.2))
 	_map_target = _map_marker(Color(1.0, 0.9, 0.2))
+
+
+func _build_pixel_golfer_view(env: Environment) -> void:
+	_pixel_view = SubViewport.new()
+	_pixel_view.transparent_bg = true
+	_pixel_view.msaa_3d = Viewport.MSAA_DISABLED
+	_pixel_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(_pixel_view)
+	_pixel_camera = Camera3D.new()
+	_pixel_camera.cull_mask = Golfer.LAYER
+	# Same light as the course, but a clear (transparent) background.
+	var own := Environment.new()
+	own.background_mode = Environment.BG_CLEAR_COLOR
+	own.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	own.ambient_light_color = Color(0.62, 0.66, 0.74)
+	own.ambient_light_energy = 0.9
+	own.tonemap_mode = env.tonemap_mode
+	_pixel_camera.environment = own
+	_pixel_view.add_child(_pixel_camera)
+	var layer := CanvasLayer.new()
+	layer.layer = 0
+	add_child(layer)
+	_pixel_rect = TextureRect.new()
+	_pixel_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_pixel_rect.texture = _pixel_view.get_texture()
+	_pixel_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_pixel_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_pixel_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	_pixel_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(_pixel_rect)
+
+
+## Keeps the pixel-art golfer's camera exactly where the main camera is.
+func _sync_pixel_golfer() -> void:
+	# The smooth style just shows the golfer in the main view instead.
+	var pixel := _graphics.pixel_golfer
+	if pixel:
+		_camera.cull_mask &= ~Golfer.LAYER
+	else:
+		_camera.cull_mask |= Golfer.LAYER
+	var on := pixel and _golfer.visible and _camera.current
+	_pixel_rect.visible = on
+	if not on:
+		return
+	var view := get_viewport().get_visible_rect().size
+	var want := Vector2i(ceili(view.x / PIXEL_SIZE), ceili(view.y / PIXEL_SIZE))
+	if _pixel_view.size != want:
+		_pixel_view.size = want
+	_pixel_camera.global_transform = _camera.global_transform
+	_pixel_camera.fov = _camera.fov
+	_pixel_camera.near = _camera.near
+	_pixel_camera.far = 60.0
 
 
 func _overlay(mesh: Mesh, colour: Color) -> MeshInstance3D:

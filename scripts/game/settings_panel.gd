@@ -13,6 +13,7 @@ var _restart: Button
 var _note: Label
 var _updates: CheckBox
 var _map_first: CheckBox
+var _pixel: CheckBox
 var _pads: Label
 
 
@@ -43,6 +44,10 @@ func _ready() -> void:
 	box.add_child(_restart)
 
 	box.add_child(HSeparator.new())
+	_pixel = CheckBox.new()
+	_pixel.text = "Classic pixel-art golfer (as in MicroProse Golf)"
+	_pixel.toggled.connect(func(_on: bool) -> void: _on_changed())
+	box.add_child(_pixel)
 	_map_first = CheckBox.new()
 	_map_first.text = "Start each shot on the hole map (as in MicroProse Golf)"
 	_map_first.toggled.connect(func(_on: bool) -> void: _on_changed())
@@ -103,6 +108,7 @@ func open(s: GraphicsSettings) -> void:
 	_renderer.select(s.renderer)
 	_updates.set_pressed_no_signal(s.check_updates)
 	_map_first.set_pressed_no_signal(s.map_first)
+	_pixel.set_pressed_no_signal(s.pixel_golfer)
 	_update_note()
 
 
@@ -112,6 +118,7 @@ func _on_changed() -> void:
 	settings.renderer = _renderer.selected
 	settings.check_updates = _updates.button_pressed
 	settings.map_first = _map_first.button_pressed
+	settings.pixel_golfer = _pixel.button_pressed
 	settings.save()
 	_update_note()
 	changed.emit(settings)
