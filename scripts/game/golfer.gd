@@ -386,10 +386,11 @@ func _scaled(pose: Dictionary, f: float) -> Dictionary:
 static func _pow(q: Quaternion, k: float) -> Quaternion:
 	if q.w < 0.0:
 		q = -q
-	var angle := q.get_angle()
-	if angle < 0.0001:
+	# A bone that doesn't move gives (nearly) no axis: leave it alone.
+	var axis := Vector3(q.x, q.y, q.z)
+	if axis.length() < 1e-5:
 		return Quaternion.IDENTITY
-	return Quaternion(q.get_axis().normalized(), angle * k)
+	return Quaternion(axis.normalized(), q.get_angle() * k)
 
 
 ## Every animated bone's [position, rotation] at time t.
