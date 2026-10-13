@@ -198,7 +198,11 @@ course layouts in `courses/` are derived from OpenStreetMap: © OpenStreetMap
 contributors, available under the
 [Open Database Licence](https://opendatacommons.org/licenses/odbl/). Course
 names are neutral; they describe the real course they're based on without
-using its trademarks. It collects no
+using its trademarks. The golfer is a [MakeHuman](http://www.makehuman.org/)
+character built from the CC0 MakeHuman asset packs, and his swing and putt are
+motion capture from the [CMU Graphics Lab Motion Capture
+Database](http://mocap.cs.cmu.edu/) (subject 64), which was created with
+funding from NSF EIA-0196217. It collects no
 personal data. The only automatic network request is a check with GitHub for
 a newer version when the game starts, which you can turn off in **Settings**.
 Windows builds are code-signed; see [CODE_SIGNING.md](CODE_SIGNING.md) for the
@@ -268,6 +272,13 @@ tests/net_test.sh godot
 - `server/` is the society server: a small Python (FastAPI + SQLite) web
   service with its own tests (`server/tests`) and deployment files
   (`server/deploy`, `server/DEPLOY.md`).
+- `assets/golfer/` is the golfer: `golfer.glb` (MakeHuman body, clothes and
+  the CMU swing and putt) and `golfer.json` (when each stroke reaches the top,
+  impact and the finish). `tools/build_golfer.py` rebuilds both in headless
+  Blender 4.5 with the MPFB extension, the MakeHuman asset packs and the CMU
+  BVH files (`blender -b -P tools/build_golfer.py -- --out assets/golfer/golfer.glb`).
+  `scripts/game/golfer.gd` plays the strokes from the swing meter and sizes
+  the club for the one in hand.
 - `tests/run_tests.gd` is the headless test runner, `tests/net_test.sh` is
   the two-machine network test, and `tests/society_test.sh` runs the game's
   society client against a throwaway local server.

@@ -1,335 +1,426 @@
 class_name Golfer
 extends Node3D
-## A golfer at the ball whose swing follows the swing meter: the backswing
-## grows with the power being set (overswing shows), the downswing comes down
-## to impact as the meter returns, and the finish plays out as the ball is
-## struck. Putts are a short pendulum stroke.
+## A lifelike golfer at the ball whose swing follows the swing meter: the
+## backswing grows with the power being set, the downswing comes down to
+## impact as the meter returns, and the finish plays out as the ball is struck.
 ##
-## Dressed like MicroProse Golf's golfer: a red long-sleeved jumper with a
-## white collar, dark navy trousers, white shoes, a white glove and a cap.
-## The cap carries the player's colour so players can tell whose turn it is
-## (player 1's is white, exactly as in the original).
-##
-## Built from rounded parts (capsules and spheres) with real joints: arms
-## bend at the elbows (solved each frame so both hands stay on the grip),
-## legs flex at the knees, and the body turns through the swing.
+## The body is a MakeHuman character (CC0) and the motion is real: CMU motion
+## capture of a golfer's full swing and putt (subject 64), retargeted onto it
+## by tools/build_golfer.py. The club is baked onto a "Club" bone; this script
+## sizes it for the club in hand and tilts it to that club's lie, so the head
+## sits at the ball at address. The cap carries the player's colour.
 ##
 ## Local frame: +X points at the target (the golfer's left, for a
 ## right-hander), +Z from the golfer towards the ball, +Y up.
 
-const UPPER_ARM := 0.3
-const FOREARM := 0.29
-const THIGH := 0.46
-const SHIN := 0.45
-const HIP_HEIGHT := 0.93
-const SPINE := 0.52
-const SPINE_TILT := deg_to_rad(30.0)
-const FINISH_TIME := 0.7
-## Distance from the middle of the shoulders to the hands along the swing.
-const ARM := 0.56
-
-var _parts := {}
-## The classic red jumper, and the cap in the player's colour.
-const JUMPER := Color(0.8, 0.1, 0.1)
-## The golfer draws on its own render layer, so the game can show it in the
-## original's chunky pixel-art style (see golf_game.gd).
+const MODEL := "res://assets/golfer/golfer.glb"
+const MARKERS := "res://assets/golfer/golfer.json"
+## The golfer draws on its own render layer, so the game can show it through
+## its own view (see golf_game.gd).
 const LAYER := 1 << 2
-var _shirt := StandardMaterial3D.new()
-var _cap := StandardMaterial3D.new()
+const BALL_RADIUS := 0.021
+## Club lengths in metres; the full swing was built for the 7 iron.
+const LENGTHS := [1.14, 1.09, 1.07, 0.99, 0.98, 0.97, 0.95, 0.94, 0.93, 0.91, 0.9, 0.89, 0.86]
+const BUILT_FOR := 0.94
+## Seconds of the capture to hold at address, before the takeaway starts.
+const ADDRESS_LEAD := 0.3
+## The downswing blends out of a short backswing's pose over this much of it.
+const BLEND := 0.25
+## How much bigger than the captured stroke a full-power putt is.
+const PUTT_SCALE := 5.0
+## How long either side of impact the club is steered onto the ball.
+const FIX_WIDTH := 0.1
+## How far moving the ball back or forward in the stance moves it along the
+## golfer's feet.
+const BALL_SHIFT := 0.08
+## Body turn per step of stance, open (-) to closed (+).
+const STANCE_TURN := deg_to_rad(4.0)
+
+var _model: Node3D
+var _skeleton: Skeleton3D
+var _club_bone := -1
+var _club: Node3D
+var _shaft: MeshInstance3D
+var _head: MeshInstance3D
+var _grip: MeshInstance3D
+var _cap: StandardMaterial3D
+var _markers := {}
+var _anims := {}
+## Bone index → [position track or -1, rotation track or -1], per animation.
+var _tracks := {}
+
 var _putter := false
-var _shoulders := Vector3.ZERO
-var _ball_local := Vector3.ZERO
-var _plane_normal := Vector3.ZERO
-var _arm_start := Vector3.ZERO
+var _stroke := "swing"
+var _anim: Animation
+var _m := {}
 var _club_length := 1.0
-var _sign := 1.0
-var _arm := 0.0
-var _wrist := 0.0
-var _turn := 0.0
+## The club's size and lie, relative to the Club bone.
+var _club_shape := Basis.IDENTITY
+## When this club's head passes the ball, and the turn that puts it exactly
+## on the ball then (faded in and out around impact).
+var _impact_t := 0.0
+var _fix := Quaternion.IDENTITY
+var _pivot: Node3D
+var _back_t := 0.0
+var _back_f := 0.0
 var _finish_t := -1.0
-var _top := 0.0
-## -2 open .. 2 closed: moves a foot back from the line, as the stance does.
-var _stance := 0
+var _scale := 1.0
+var _address_pose := {}
 
 
 func _ready() -> void:
-	# MicroProse's palette: red jumper, purple slacks, white cap, hair and shoes.
-	var skin := _mat(Color(0.95, 0.72, 0.58))
-	var trousers := _mat(Color(0.3, 0.17, 0.48))
-	var shoes := _mat(Color(0.97, 0.97, 0.97))
-	var glove := _mat(Color(0.98, 0.98, 0.98))
-	var collar := _mat(Color(0.97, 0.97, 0.97))
-	var cap := _cap
-	_toon(cap)
-	cap.albedo_color = Color(0.97, 0.97, 0.97)
-	var hair := _mat(Color(0.92, 0.9, 0.86))
-	var steel := _mat(Color(0.86, 0.86, 0.9), false)
-	var grip := _mat(Color(0.1, 0.1, 0.1), false)
-	for side in ["l", "r"]:
-		# Slacks: full in the thigh, tapering to the ankle.
-		_parts["thigh_" + side] = _capsule(trousers, 0.095)
-		_parts["shin_" + side] = _capsule(trousers, 0.075)
-		_parts["shoe_" + side] = _capsule(shoes, 0.058)
-		# Long sleeves: the jumper runs down to the wrist.
-		_parts["upper_arm_" + side] = _capsule(_shirt, 0.068)
-		_parts["forearm_" + side] = _capsule(_shirt, 0.055)
-		_parts["wrist_" + side] = _sphere(skin, 0.035)
-	_parts["pelvis"] = _capsule(trousers, 0.16)
-	_parts["torso"] = _capsule(_shirt, 0.19)
-	_parts["chest"] = _capsule(_shirt, 0.085)
-	_parts["neck"] = _capsule(skin, 0.05)
-	var ring := TorusMesh.new()
-	ring.inner_radius = 0.045
-	ring.outer_radius = 0.075
-	_parts["collar"] = MeshInstance3D.new()
-	_parts["collar"].mesh = ring
-	_parts["collar"].material_override = collar
-	_parts["collar"].layers = LAYER
-	add_child(_parts["collar"])
-	_parts["head"] = _sphere(skin, 0.115)
-	_parts["hair"] = _sphere(hair, 0.112)
-	_parts["cap"] = _sphere(cap, 0.12)
-	_parts["brim"] = _box(cap)
-	_parts["hands"] = _sphere(glove, 0.05)
-	_parts["grip"] = _capsule(grip, 0.016)
-	_parts["shaft"] = _capsule(steel, 0.014)
-	_parts["clubhead"] = _box(_mat(Color(0.14, 0.14, 0.16)))
-	_shirt.albedo_color = JUMPER
-	_toon(_shirt)
+	if _model:
+		return
+	var scene: PackedScene = load(MODEL)
+	_model = scene.instantiate()
+	add_child(_model)
+	_skeleton = _find_skeleton(_model)
+	_club_bone = _skeleton.find_bone("Club")
+	var player := _find_player(_model)
+	for name in ["swing", "putt"]:
+		var anim := player.get_animation(name)
+		_anims[name] = anim
+		_tracks[name] = _bone_tracks(anim)
+	player.stop()
+	player.active = false
+	_markers = JSON.parse_string(FileAccess.get_file_as_string(MARKERS))
+	_dress(_model)
+	_build_club()
+
+
+static func _find_skeleton(n: Node) -> Skeleton3D:
+	if n is Skeleton3D:
+		return n
+	for c in n.get_children():
+		var s := _find_skeleton(c)
+		if s:
+			return s
+	return null
+
+
+static func _find_player(n: Node) -> AnimationPlayer:
+	if n is AnimationPlayer:
+		return n
+	for c in n.get_children():
+		var p := _find_player(c)
+		if p:
+			return p
+	return null
+
+
+func _bone_tracks(anim: Animation) -> Dictionary:
+	var out := {}
+	for i in anim.get_track_count():
+		var path := anim.track_get_path(i)
+		var bone := _skeleton.find_bone(path.get_concatenated_subnames())
+		if bone < 0:
+			continue
+		var entry: Array = out.get(bone, [-1, -1])
+		match anim.track_get_type(i):
+			Animation.TYPE_POSITION_3D:
+				entry[0] = i
+			Animation.TYPE_ROTATION_3D:
+				entry[1] = i
+		out[bone] = entry
+	return out
+
+
+## Puts every mesh on the golfer's layer, and gives the cap its own material
+## so it can take the player's colour.
+func _dress(n: Node) -> void:
+	if n is MeshInstance3D:
+		var mi: MeshInstance3D = n
+		mi.layers = LAYER
+		if "cap" in mi.name.to_lower() and mi.mesh:
+			var base := mi.mesh.surface_get_material(0)
+			_cap = base.duplicate() if base is StandardMaterial3D else StandardMaterial3D.new()
+			mi.set_surface_override_material(0, _cap)
+	for c in n.get_children():
+		_dress(c)
+
+
+func _build_club() -> void:
+	var steel := StandardMaterial3D.new()
+	steel.albedo_color = Color(0.82, 0.83, 0.86)
+	steel.metallic = 0.9
+	steel.roughness = 0.3
+	var black := StandardMaterial3D.new()
+	black.albedo_color = Color(0.08, 0.08, 0.08)
+	black.roughness = 0.8
+	var head := StandardMaterial3D.new()
+	head.albedo_color = Color(0.25, 0.25, 0.28)
+	head.metallic = 0.8
+	head.roughness = 0.35
+	_club = Node3D.new()
+	_model.add_child(_club)
+	_pivot = Node3D.new()
+	_club.add_child(_pivot)
+	_shaft = _part(CylinderMesh.new(), steel)
+	_grip = _part(CylinderMesh.new(), black)
+	_head = _part(BoxMesh.new(), head)
+	var shaft: CylinderMesh = _shaft.mesh
+	shaft.top_radius = 0.0065
+	shaft.bottom_radius = 0.0045
+	shaft.radial_segments = 8
+	var grip: CylinderMesh = _grip.mesh
+	grip.top_radius = 0.012
+	grip.bottom_radius = 0.0095
+	grip.height = 0.26
+	grip.radial_segments = 8
+	_grip.position = Vector3(0.0, 0.06, 0.0)
+
+
+func _part(mesh: Mesh, mat: Material) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = mat
+	mi.layers = LAYER
+	_pivot.add_child(mi)
+	return mi
 
 
 ## Stands the golfer at the ball, aimed along heading, holding the club.
 ## ball_position: -1 back, 0 centre, 1 forward in the stance.
 ## colour: the player's colour, worn on the cap.
 func address(ball: Vector3, heading: float, club: int, ball_position: int, colour: Color, stance := 0) -> void:
-	_stance = stance
-	_cap.albedo_color = colour.darkened(0.04) if colour.v > 0.9 else colour
+	_ready()
+	if _cap:
+		_cap.albedo_color = colour
 	_putter = club == Clubs.PUTTER
+	_stroke = "putt" if _putter else "swing"
+	_anim = _anims[_stroke]
+	_m = _markers[_stroke]
+	var built: float = _m.club_length
+	_club_length = built if _putter else built * LENGTHS[club] / BUILT_FOR
+	_finish_t = -1.0
+	_back_t = 0.0
+	_back_f = 0.0
+	_scale = 1.0
+	_fix = Quaternion.IDENTITY
+	_impact_t = _m.impact
+	var address_t := maxf(float(_m.start) - ADDRESS_LEAD, 0.0)
+	_address_pose = _sample(address_t)
+	_apply(_address_pose, address_t)
+	_fit_club(0 if _putter else ball_position)
+	_aim_at_impact()
+
+	# Stand so the club head is at the ball; the stance turns the body
+	# about it.
 	var d := Vector3(sin(heading), 0.0, cos(heading))
 	var towards_ball := d.cross(Vector3.UP)
-	var b := Basis(d, Vector3.UP, towards_ball)
-	# Longer clubs stand further from the ball.
-	var reach := 0.45 if _putter else lerpf(0.78, 0.58, float(club) / Clubs.SAND_WEDGE)
-	_ball_local = Vector3(ball_position * 0.12, 0.02, reach)
-	transform = Transform3D(b, ball - b * _ball_local)
+	var b := Basis(d, Vector3.UP, towards_ball).rotated(Vector3.UP, -STANCE_TURN * stance)
+	transform = Transform3D(b, ball - b * _club_head_local())
 
-	var spine := Vector3(0.0, cos(SPINE_TILT), sin(SPINE_TILT))
-	_shoulders = Vector3(0.0, HIP_HEIGHT, 0.0) + spine * SPINE
-	var to_ball := _ball_local - _shoulders
-	_plane_normal = Vector3.RIGHT.cross(to_ball).normalized()
-	_arm_start = to_ball.normalized()
-	_club_length = to_ball.length() - ARM
-	# Rotate whichever way first takes the hands away from the target.
-	_sign = 1.0
-	if _arm_start.rotated(_plane_normal, 0.2).x > _arm_start.x:
-		_sign = -1.0
-	_arm = 0.0
-	_wrist = 0.0
-	_turn = 0.0
-	_finish_t = -1.0
-	_top = 0.0
-	_pose()
+
+## Sizes the club for the one in hand and tilts it, on the swing plane, to
+## that club's lie: so its head sits on the ground at address.
+func _fit_club(ball_position: int) -> void:
+	var bone := _bone_global(_club_bone)
+	var x := bone.basis.x
+	var y := bone.basis.y
+	var drop := BALL_RADIUS - bone.origin.y
+	# Head height along the tilted shaft: L(cos t y.y - sin t x.y) = drop.
+	var a := _club_length * y.y
+	var bb := -_club_length * x.y
+	var r := sqrt(a * a + bb * bb)
+	var base := atan2(bb, a)
+	var off := acos(clampf(drop / r, -1.0, 1.0))
+	var tilt := base + off if absf(base + off) < absf(base - off) else base - off
+	var lie := Basis(Vector3.BACK, tilt)
+	# Ball forward or back in the stance: swing the head along the ground,
+	# so the golfer stands that much further back or forward of the ball.
+	var reach := Vector2(bone.basis.y.x, bone.basis.y.z).length() * _club_length
+	var yaw := Basis.IDENTITY
+	if ball_position != 0 and reach > 0.1:
+		var turn := BALL_SHIFT * ball_position / reach
+		yaw = bone.basis.inverse() * Basis(Vector3.UP, turn) * bone.basis
+	var shape := yaw * lie
+	_shaft.mesh.height = _club_length
+	_shaft.position = shape * Vector3(0.0, _club_length * 0.5, 0.0)
+	_shaft.basis = shape
+	_grip.position = shape * Vector3(0.0, 0.11, 0.0)
+	_grip.basis = shape
+	var head_size := Vector3(0.075, 0.03, 0.05) if _putter else Vector3(0.08, 0.035, 0.05)
+	if not _putter and _club_length > 1.05:
+		head_size = Vector3(0.11, 0.06, 0.1)
+	_head.mesh.size = head_size
+	# The head sits at the end of the shaft, its face square to the target.
+	_head.position = shape * Vector3(0.0, _club_length, 0.0)
+	_head.basis = shape
+	_club_shape = shape
+	_pivot.basis = Basis.IDENTITY
+
+
+## A bone's pose in skeleton space, composed from the local poses (always up
+## to date, unlike the skeleton's cached global poses).
+func _bone_global(bone: int) -> Transform3D:
+	var t := _skeleton.get_bone_pose(bone)
+	var parent := _skeleton.get_bone_parent(bone)
+	while parent >= 0:
+		t = _skeleton.get_bone_pose(parent) * t
+		parent = _skeleton.get_bone_parent(parent)
+	return t
+
+
+func _sync_club(t: float) -> void:
+	_club.transform = _skeleton.transform * _bone_global(_club_bone)
+	var w := exp(-pow((t - _impact_t) / FIX_WIDTH, 2.0)) if t > -INF else 0.0
+	_pivot.basis = Basis(Quaternion.IDENTITY.slerp(_fix, w))
+
+
+## Finds when this club's head passes closest to the ball, and the small turn
+## of the club that makes it strike the ball exactly there.
+func _aim_at_impact() -> void:
+	var ball := _tip()
+	var impact: float = _m.impact
+	var best := INF
+	for i in 97:
+		var t := impact - 0.08 + i * 0.16 / 96.0
+		_apply(_impact_pose(t), -INF)
+		var d := _tip().distance_to(ball)
+		if d < best:
+			best = d
+			_impact_t = t
+	_apply(_impact_pose(_impact_t), -INF)
+	var bone := _bone_global(_club_bone)
+	var want := (bone.affine_inverse() * ball).normalized()
+	var have := (_club_shape * Vector3(0.0, _club_length, 0.0)).normalized()
+	_fix = Quaternion(have, want)
+	_apply(_address_pose, -INF)
+
+
+func _impact_pose(t: float) -> Dictionary:
+	return _scaled(_sample(t), 1.0) if _putter else _sample(t)
+
+
+## The club head in skeleton space, without the impact turn.
+func _tip() -> Vector3:
+	return _bone_global(_club_bone) * (_club_shape * Vector3(0.0, _club_length, 0.0))
+
+
+## Where the club head is, in the golfer's own frame.
+func _club_head_local() -> Vector3:
+	var bone := _bone_global(_club_bone)
+	var tip := bone * (_pivot.basis * (_club_shape * Vector3(0.0, _club_length, 0.0)))
+	return _model.transform * (_skeleton.transform * tip)
+
+
+## Where the club head is now, in the parent's frame (for tests).
+func club_head() -> Vector3:
+	return transform * _club_head_local()
 
 
 ## Follows the swing meter: call every frame while swinging.
 func follow_meter(phase: SwingMeter.Phase, value: float, power: float, delta: float) -> void:
-	var full := deg_to_rad(28.0) if _putter else deg_to_rad(200.0)
+	if _anim == null:
+		return
+	var start: float = _m.start
+	var top: float = _m.top
+	var impact := _impact_t
+	var pose := {}
+	var t := -INF
 	match phase:
 		SwingMeter.Phase.IDLE:
 			if _finish_t < 0.0:
-				_arm = 0.0
-				_wrist = 0.0
-				_turn = 0.0
+				pose = _address_pose
+				t = maxf(start - ADDRESS_LEAD, 0.0)
 		SwingMeter.Phase.BACKSWING:
-			var f := maxf(value, 0.0)
-			_top = full * f
-			_arm = full * f
-			_wrist = 0.0 if _putter else deg_to_rad(85.0) * smoothstep(0.15, 0.7, f)
-			_turn = 0.0 if _putter else -0.42 * _arm
+			_back_f = clampf(value, 0.0, 1.0)
+			_scale = _stroke_scale(_back_f)
+			_back_t = lerpf(start, top, _back_f if not _putter else 1.0)
+			t = _back_t
+			pose = _sample(_back_t) if not _putter else _scaled(_sample(top), _back_f)
 		SwingMeter.Phase.DOWNSWING:
-			# Down from the top to impact as the meter returns to the snap line.
 			var u := clampf(1.0 - value / maxf(power, 0.01), 0.0, 1.0)
-			var eased := u * u
-			_arm = _top * (1.0 - eased)
-			_wrist = (0.0 if _putter else deg_to_rad(85.0)) * clampf(1.0 - eased * 1.4, 0.0, 1.0)
-			_turn = -0.42 * _arm
+			if _putter:
+				t = lerpf(top, impact, u)
+				pose = _scaled(_sample(t), 1.0)
+			else:
+				var from := impact - (impact - top) * _back_f
+				t = lerpf(from, impact, u)
+				var down := _sample(t)
+				var held := _sample(_back_t)
+				pose = _blend(held, down, smoothstep(0.0, BLEND, u)) if _back_f < 1.0 else down
 		SwingMeter.Phase.DONE:
 			if _finish_t < 0.0:
 				_finish_t = 0.0
 	if _finish_t >= 0.0:
 		_finish_t += delta
-		var t := clampf(_finish_t / FINISH_TIME, 0.0, 1.0)
-		var e := 1.0 - (1.0 - t) * (1.0 - t)
-		# Putts follow through about as far as the backstroke went.
-		var finish := maxf(_top, deg_to_rad(6.0)) * 1.1 if _putter else deg_to_rad(235.0)
-		_arm = -finish * e
-		_wrist = 0.0 if _putter else deg_to_rad(-55.0) * e
-		_turn = 0.0 if _putter else deg_to_rad(95.0) * e
-	_pose()
+		var end: float = _m.end
+		var finish: float = _m.finish
+		if _putter:
+			t = minf(impact + _finish_t, finish)
+			pose = _scaled(_sample(t), 1.0)
+		else:
+			# Short shots finish short.
+			var stop := lerpf(impact + (finish - impact) * 0.45, end, smoothstep(0.3, 0.9, _back_f))
+			t = minf(impact + _finish_t, stop)
+			pose = _sample(t)
+	if not pose.is_empty():
+		_apply(pose, t)
 
 
-# --- Posing ------------------------------------------------------------------
-
-func _pose() -> void:
-	var yaw := Basis(Vector3.UP, _turn)
-	var hip_yaw := Basis(Vector3.UP, _turn * 0.45)
-	var hips := Vector3(0.0, HIP_HEIGHT, 0.0)
-	var spine := Vector3(0.0, cos(SPINE_TILT), sin(SPINE_TILT))
-	var chest := hips + yaw * (spine * SPINE)
-	var neck_top := hips + spine * (SPINE + 0.13)
-
-	# Legs: hips to feet with the knees flexed forward towards the ball.
-	var width := 0.13 if _putter else 0.19
-	for side in [-1.0, 1.0]:
-		var key := "l" if side > 0.0 else "r"
-		var hip := hips + hip_yaw * Vector3(side * 0.1, -0.05, 0.0)
-		var ankle := Vector3(side * width, 0.09, 0.02)
-		# Open: the front (left) foot drops back; closed: the back foot does.
-		if (side > 0.0 and _stance < 0) or (side < 0.0 and _stance > 0):
-			ankle.z -= absi(_stance) * 0.07
-		# On the follow-through the trail knee (right) turns in towards the target.
-		var pole := Vector3(0.0, 0.0, 1.0)
-		if side < 0.0 and _turn > 0.0:
-			pole = pole.lerp(Vector3(1.0, 0.0, 0.6), clampf(_turn / 1.6, 0.0, 1.0))
-		var knee := _ik(hip, ankle, THIGH, SHIN, pole)
-		_limb(_parts["thigh_" + key], hip, knee)
-		_limb(_parts["shin_" + key], knee, ankle)
-		_limb(_parts["shoe_" + key], ankle + Vector3(0, -0.04, -0.05), ankle + Vector3(side * 0.02, -0.04, 0.16))
-
-	# Body: pelvis across the hips, torso and chest up the tilted spine.
-	_limb(_parts["pelvis"], hips + hip_yaw * Vector3(-0.11, 0, 0), hips + hip_yaw * Vector3(0.11, 0, 0))
-	_limb(_parts["torso"], hips + spine * 0.05, hips + yaw * (spine * (SPINE * 0.8)), 1.2)
-	var l_shoulder := chest + yaw * Vector3(0.17, -0.04, 0.0)
-	var r_shoulder := chest + yaw * Vector3(-0.17, -0.04, 0.0)
-	# Shoulders: a slim bar tucked into the top of the torso.
-	_limb(_parts["chest"], r_shoulder.lerp(l_shoulder, 0.08), l_shoulder.lerp(r_shoulder, 0.08))
-	_limb(_parts["neck"], chest, neck_top)
-	# The white collar of the shirt under the jumper, round the base of the neck.
-	var up := (neck_top - chest).normalized()
-	var neck_base := chest.lerp(neck_top, 0.3)
-	_parts["collar"].transform = Transform3D(Basis(Quaternion(Vector3.UP, up)), neck_base)
-	var head := neck_top + spine * 0.1 + Vector3(0, 0.04, 0)
-	_place(_parts["head"], head)
-	_place(_parts["hair"], head + Vector3(0, -0.01, -0.03))
-	# The cap: a flattened crown and a brim towards the ball (eyes on the ball).
-	_parts["cap"].transform = Transform3D(Basis.from_scale(Vector3(1.0, 0.55, 1.0)), head + Vector3(0, 0.05, 0))
-	_parts["brim"].transform = Transform3D(Basis(Vector3.RIGHT, -0.35).scaled(Vector3(0.18, 0.015, 0.13)),
-			head + Vector3(0, 0.05, 0.12))
-
-	# Arms and club swing round the plane through the shoulders.
-	var a := _arm_start.rotated(_plane_normal, _sign * _arm)
-	var hands := _shoulders + a * ARM
-	var shaft := a.rotated(_plane_normal, _sign * _wrist)
-	var head_pos := hands + shaft * _club_length
-	for side in [-1.0, 1.0]:
-		var key := "l" if side > 0.0 else "r"
-		var shoulder := l_shoulder if side > 0.0 else r_shoulder
-		# Elbows point down and slightly out from the body.
-		var elbow := _ik(shoulder, hands, UPPER_ARM, FOREARM, Vector3(side * 0.6, -1.0, 0.2))
-		_limb(_parts["upper_arm_" + key], shoulder, elbow)
-		# Sleeve to just short of the glove, with a little skin at the wrist.
-		var wrist := elbow.lerp(hands, 0.86)
-		_limb(_parts["forearm_" + key], elbow, wrist)
-		_place(_parts["wrist_" + key], wrist.lerp(hands, 0.5))
-	_place(_parts["hands"], hands)
-	_limb(_parts["grip"], hands - shaft * 0.04, hands + shaft * 0.16)
-	_limb(_parts["shaft"], hands, head_pos)
-	_parts["clubhead"].transform = Transform3D(Basis.from_scale(Vector3(0.11 if not _putter else 0.12, 0.05, 0.05)), head_pos)
+## Putts: the captured stroke is a short one, so bigger putts swing further.
+func _stroke_scale(f: float) -> float:
+	return lerpf(1.0, PUTT_SCALE, f) if _putter else 1.0
 
 
-## Two-bone joint: where the elbow or knee goes for a limb from `root` to
-## `end` with the given segment lengths, bending towards `pole`.
-static func _ik(root: Vector3, end: Vector3, a: float, b: float, pole: Vector3) -> Vector3:
-	var d := end - root
-	var dist := clampf(d.length(), 0.001, a + b - 0.001)
-	var dir := d.normalized()
-	# Distance along root→end to the joint, and how far it sits off that line.
-	var x := (a * a - b * b + dist * dist) / (2.0 * dist)
-	var h := sqrt(maxf(a * a - x * x, 0.0))
-	var bend := pole - dir * pole.dot(dir)
-	if bend.length() < 0.001:
-		bend = dir.cross(Vector3.UP)
-	return root + dir * x + bend.normalized() * h
+## Exaggerates a putting pose's movement away from address by the stroke size.
+## f: how far through the backstroke (0..1) for a pose on the way back.
+func _scaled(pose: Dictionary, f: float) -> Dictionary:
+	var k := _scale * f
+	var out := {}
+	for bone in pose:
+		var p: Array = pose[bone]
+		var a: Array = _address_pose[bone]
+		var ra: Quaternion = a[1]
+		var rp: Quaternion = p[1]
+		var rot := ra * _pow(ra.inverse() * rp, k)
+		var pos: Vector3 = a[0] + (p[0] - a[0]) * k
+		out[bone] = [pos, rot]
+	return out
 
 
-## Stretches a capsule part between two points (local space).
-func _limb(mi: MeshInstance3D, from: Vector3, to: Vector3, girth := 1.0) -> void:
-	var dir := to - from
-	var length := dir.length()
-	if length < 0.001:
-		return
-	var y := dir / length
-	var x := Vector3.RIGHT if absf(y.dot(Vector3.RIGHT)) < 0.9 else Vector3.FORWARD
-	var z := x.cross(y).normalized()
-	x = y.cross(z).normalized()
-	var r: float = mi.get_meta("radius")
-	# The capsule mesh is radius r and height 2r; stretch its length only.
-	var stretch := (length + 2.0 * r) / (2.0 * r)
-	mi.transform = Transform3D(Basis(x * girth, y * stretch, z), (from + to) * 0.5)
+static func _pow(q: Quaternion, k: float) -> Quaternion:
+	if q.w < 0.0:
+		q = -q
+	var angle := q.get_angle()
+	if angle < 0.0001:
+		return Quaternion.IDENTITY
+	return Quaternion(q.get_axis().normalized(), angle * k)
 
 
-func _place(mi: MeshInstance3D, at: Vector3) -> void:
-	mi.transform = Transform3D(Basis.IDENTITY, at)
+## Every animated bone's [position, rotation] at time t.
+func _sample(t: float) -> Dictionary:
+	var out := {}
+	var tracks: Dictionary = _tracks[_stroke]
+	for bone in tracks:
+		var tr: Array = tracks[bone]
+		var pos := _skeleton.get_bone_rest(bone).origin
+		var rot := _skeleton.get_bone_rest(bone).basis.get_rotation_quaternion()
+		if tr[0] >= 0:
+			pos = _anim.position_track_interpolate(tr[0], t)
+		if tr[1] >= 0:
+			rot = _anim.rotation_track_interpolate(tr[1], t)
+		out[bone] = [pos, rot]
+	return out
 
 
-func _capsule(mat: Material, r: float) -> MeshInstance3D:
-	var mesh := CapsuleMesh.new()
-	mesh.radius = r
-	mesh.height = r * 2.0
-	mesh.radial_segments = 12
-	mesh.rings = 4
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.material_override = mat
-	mi.set_meta("radius", r)
-	mi.layers = LAYER
-	add_child(mi)
-	return mi
+static func _blend(a: Dictionary, b: Dictionary, w: float) -> Dictionary:
+	var out := {}
+	for bone in a:
+		var pa: Array = a[bone]
+		var pb: Array = b[bone]
+		var ra: Quaternion = pa[1]
+		out[bone] = [pa[0].lerp(pb[0], w), ra.slerp(pb[1], w)]
+	return out
 
 
-func _sphere(mat: Material, r: float) -> MeshInstance3D:
-	var mesh := SphereMesh.new()
-	mesh.radius = r
-	mesh.height = r * 2.0
-	mesh.radial_segments = 16
-	mesh.rings = 8
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.material_override = mat
-	mi.layers = LAYER
-	add_child(mi)
-	return mi
-
-
-func _box(mat: Material) -> MeshInstance3D:
-	var mesh := BoxMesh.new()
-	mesh.size = Vector3.ONE
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.material_override = mat
-	mi.layers = LAYER
-	add_child(mi)
-	return mi
-
-
-static func _mat(colour: Color, outline := true) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = colour
-	_toon(m, outline)
-	return m
-
-
-## Flat two-tone shading with a dark outline, like a sprite.
-static func _toon(m: StandardMaterial3D, outline := true) -> void:
-	m.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
-	m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
-	m.roughness = 1.0
-	m.metallic = 0.0
-	if outline:
-		var line := StandardMaterial3D.new()
-		line.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		line.albedo_color = Color(0.08, 0.06, 0.06)
-		line.cull_mode = BaseMaterial3D.CULL_FRONT
-		line.grow = true
-		line.grow_amount = 0.014
-		m.next_pass = line
+## Poses the skeleton; t is the capture time it came from, for the club's
+## impact turn (-INF for none).
+func _apply(pose: Dictionary, t: float) -> void:
+	for bone in pose:
+		var p: Array = pose[bone]
+		_skeleton.set_bone_pose_position(bone, p[0])
+		_skeleton.set_bone_pose_rotation(bone, p[1])
+	_sync_club(t)

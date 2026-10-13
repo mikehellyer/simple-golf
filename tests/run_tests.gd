@@ -543,17 +543,40 @@ func test_golfer() -> void:
 	var ball := Vector3(12.0, 3.0, -40.0)
 	for club in [Clubs.DRIVER, 7, Clubs.SAND_WEDGE, Clubs.PUTTER]:
 		for pos in [-1, 0, 1]:
-			g.address(ball, 0.7, club, pos, Color.RED)
-			var head: Vector3 = g.transform * g._parts["clubhead"].position
-			check(head.distance_to(ball) < 0.06, "%s, ball %d: club head at the ball (%.2f m away)" % [
-					Clubs.club_name(club), pos, head.distance_to(ball)])
+			for stance in [-2, 0, 2]:
+				g.address(ball, 0.7, club, pos, Color.RED, stance)
+				var head := g.club_head()
+				check(head.distance_to(ball) < 0.03, "%s, ball %d, stance %d: club head at the ball (%.2f m away)" % [
+						Clubs.club_name(club), pos, stance, head.distance_to(ball)])
+	g.address(ball, 0.0, Clubs.DRIVER, 0, Color.RED)
+	var feet := g.position
+	g.address(ball, 0.0, Clubs.DRIVER, 1, Color.RED)
+	check(g.position.x < feet.x - 0.04, "ball forward in the stance: the golfer stands further back")
 	g.address(ball, 0.0, Clubs.DRIVER, 0, Color.RED)
 	g.follow_meter(SwingMeter.Phase.BACKSWING, 1.0, 0.0, 0.016)
-	var top: Vector3 = g.transform * g._parts["clubhead"].position
-	check(top.y > ball.y + 1.5, "at the top of a full swing the club is up behind the head")
+	var top := g.club_head()
+	check(top.y > ball.y + 1.5, "at the top of a full swing the club is up behind the head (%.2f m up)" % (top.y - ball.y))
 	g.follow_meter(SwingMeter.Phase.DOWNSWING, 0.0, 1.0, 0.016)
-	var impact: Vector3 = g.transform * g._parts["clubhead"].position
+	var impact := g.club_head()
 	check(impact.distance_to(ball) < 0.15, "back at the ball at impact (%.2f m)" % impact.distance_to(ball))
+	for i in 120:
+		g.follow_meter(SwingMeter.Phase.DONE, 0.0, 1.0, 1.0 / 60.0)
+	check(g.club_head().y > ball.y + 1.0, "the full swing finishes with the club up over the shoulder")
+	# A short backswing comes down to impact too.
+	g.address(ball, 0.0, 7, 0, Color.RED)
+	g.follow_meter(SwingMeter.Phase.BACKSWING, 0.4, 0.0, 0.016)
+	g.follow_meter(SwingMeter.Phase.DOWNSWING, 0.0, 0.4, 0.016)
+	check(g.club_head().distance_to(ball) < 0.15, "a half swing still returns to the ball")
+	# Putts: a bigger putt takes the putter further back.
+	g.address(ball, 0.0, Clubs.PUTTER, 0, Color.RED)
+	g.follow_meter(SwingMeter.Phase.BACKSWING, 0.2, 0.0, 0.016)
+	var short_back := g.club_head().distance_to(ball)
+	g.follow_meter(SwingMeter.Phase.BACKSWING, 1.0, 0.0, 0.016)
+	var long_back := g.club_head().distance_to(ball)
+	check(long_back > short_back * 2.0 and long_back > 0.15,
+			"a full putt has a longer backstroke (%.2f vs %.2f m)" % [long_back, short_back])
+	g.follow_meter(SwingMeter.Phase.DOWNSWING, 0.0, 1.0, 0.016)
+	check(g.club_head().distance_to(ball) < 0.06, "the putter comes back to the ball (%.2f m)" % g.club_head().distance_to(ball))
 	g.free()
 
 
