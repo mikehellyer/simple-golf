@@ -141,7 +141,7 @@ where a full, pure strike with your club would go; the info panel gives the
 "Aim" distance. You can turn this off in **Settings**, and **M** opens the map
 at any time.
 
-**Putting:** as in the original, the golfer steps aside and the view drops
+**Putting:** the golfer putts with a real (motion-captured) stroke, and the view drops
 low behind the ball so you can read the green, and the putting bar replaces
 the swing ring. Within 30 yards of the green three icons
 appear: **change view** (V cycles from the ball, from behind the hole, and

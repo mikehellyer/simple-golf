@@ -1689,9 +1689,11 @@ func _aim_camera() -> void:
 		_cam_target = body + face * 4.2 + Vector3.UP * 0.2 - dir * 0.6
 		_cam_look = body + dir * 0.3
 	elif club == Clubs.PUTTER:
-		# Low, straight down the line: the golfer stands aside while putting,
-		# as in the original, so the whole green can be read.
-		_cam_target = _ball.pos - dir * 2.6 + Vector3.UP * 0.9
+		# Low, straight down the line, so the whole green can be read; the
+		# golfer stands at the ball beside the line, so stand back a little
+		# and to the other side of it to keep him from hiding the line.
+		var away := dir.cross(Vector3.UP)
+		_cam_target = _ball.pos - dir * 3.6 + away * 0.5 + Vector3.UP * 1.2
 		_cam_look = _ball.pos + dir * 5.0
 	else:
 		# Close behind the golfer, as in the original, so the swing fills the
@@ -1842,7 +1844,7 @@ func _place_golfer() -> void:
 		return
 	var cap_colour := _hitter.colour if _hitter else Color.WHITE
 	_golfer.address(_ball.pos, heading, club, int(_setup.ball_position), cap_colour, int(_setup.get("stance", 0)))
-	_golfer.visible = club != Clubs.PUTTER
+	_golfer.visible = true
 
 
 func _update_aim() -> void:
