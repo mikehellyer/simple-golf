@@ -19,6 +19,8 @@ const MARKERS := "res://assets/golfer/golfer.json"
 ## its own view (see golf_game.gd).
 const LAYER := 1 << 2
 const BALL_RADIUS := 0.021
+## How far the club runs up past the Club bone, above the hands.
+const BUTT := 0.1
 ## Club lengths in metres; the full swing was built for the 7 iron.
 const LENGTHS := [1.14, 1.09, 1.07, 0.99, 0.98, 0.97, 0.95, 0.94, 0.93, 0.91, 0.9, 0.89, 0.86]
 const BUILT_FOR := 0.94
@@ -167,7 +169,6 @@ func _build_club() -> void:
 	grip.bottom_radius = 0.0095
 	grip.height = 0.26
 	grip.radial_segments = 8
-	_grip.position = Vector3(0.0, 0.06, 0.0)
 
 
 func _part(mesh: Mesh, mat: Material) -> MeshInstance3D:
@@ -235,10 +236,11 @@ func _fit_club(ball_position: int) -> void:
 		var turn := BALL_SHIFT * ball_position / reach
 		yaw = bone.basis.inverse() * Basis(Vector3.UP, turn) * bone.basis
 	var shape := yaw * lie
-	_shaft.mesh.height = _club_length
-	_shaft.position = shape * Vector3(0.0, _club_length * 0.5, 0.0)
+	# The grip's butt end sits just above the left hand, above the Club bone.
+	_shaft.mesh.height = _club_length + BUTT
+	_shaft.position = shape * Vector3(0.0, (_club_length - BUTT) * 0.5, 0.0)
 	_shaft.basis = shape
-	_grip.position = shape * Vector3(0.0, 0.11, 0.0)
+	_grip.position = shape * Vector3(0.0, 0.13 - BUTT, 0.0)
 	_grip.basis = shape
 	var head_size := Vector3(0.075, 0.03, 0.05) if _putter else Vector3(0.08, 0.035, 0.05)
 	if not _putter and _club_length > 1.05:

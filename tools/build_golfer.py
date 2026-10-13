@@ -31,7 +31,7 @@ CHARACTER = {
         "proportions": 0.6, "height": 0.55, "cupsize": 0.5, "firmness": 0.5,
         "race": {"asian": 0.0, "caucasian": 1.0, "african": 0.0},
     },
-    "rig": "cmu_mb",
+    "rig": "game_engine",
     "eyes": "high-poly/high-poly.mhclo",
     "eyebrows": "eyebrow001/eyebrow001.mhclo",
     "eyelashes": "eyelashes01/eyelashes01.mhclo",
@@ -79,37 +79,39 @@ def build_character():
 
 def render(path, rig, frame):
     scene = bpy.context.scene
-    if "cam" in bpy.data.objects:
-        scene.render.filepath = path
-        bpy.ops.render.render(write_still=True)
-        return
-    cam_data = bpy.data.cameras.new("cam")
-    cam = bpy.data.objects.new("cam", cam_data)
-    scene.collection.objects.link(cam)
     view = os.environ.get("VIEW", "front")
-    if view == "front":
+    if "cam" not in bpy.data.objects:
+        cam_data = bpy.data.cameras.new("cam")
+        cam = bpy.data.objects.new("cam", cam_data)
+        scene.collection.objects.link(cam)
+        scene.camera = cam
+        bpy.ops.mesh.primitive_plane_add(size=6.0)
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.021, location=BALL)
+        sun = bpy.data.objects.new("sun", bpy.data.lights.new("sun", "SUN"))
+        sun.rotation_euler = (math.radians(50), 0.0, math.radians(30))
+        scene.collection.objects.link(sun)
+        world = bpy.data.worlds.new("w")
+        world.color = (0.5, 0.6, 0.7)
+        scene.world = world
+        scene.render.engine = "BLENDER_EEVEE_NEXT"
+        scene.render.resolution_x = 640
+        scene.render.resolution_y = 800
+    cam = bpy.data.objects["cam"]
+    cam.data.lens = 40
+    if view.startswith("hands"):
+        # Close in on the hands, wherever they are in the swing.
+        pb = rig.pose.bones
+        hands = rig.matrix_world @ ((pb["hand_l"].head + pb["hand_r"].head) / 2.0)
+        offset = Vector((0.0, -0.6, 0.05)) if view == "hands" else Vector((-0.6, -0.1, 0.05))
+        cam.location = hands + offset
+        cam.rotation_euler = (-offset).to_track_quat("-Z", "Y").to_euler()
+        cam.data.lens = 50
+    elif view == "front":
         cam.location = (0.0, -4.2, 1.0)
         cam.rotation_euler = (math.radians(88), 0.0, 0.0)
-    elif view == "hands":
-        cam.location = (0.0, -2.0, 1.0)
-        cam.rotation_euler = (math.radians(90), 0.0, 0.0)
-        cam_data.lens = 120
     else:
         cam.location = (-4.2, -0.3, 1.0)
         cam.rotation_euler = (math.radians(88), 0.0, math.radians(-90))
-    cam_data.lens = 40
-    scene.camera = cam
-    bpy.ops.mesh.primitive_plane_add(size=6.0)
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.021, location=BALL)
-    sun = bpy.data.objects.new("sun", bpy.data.lights.new("sun", "SUN"))
-    sun.rotation_euler = (math.radians(50), 0.0, math.radians(30))
-    scene.collection.objects.link(sun)
-    world = bpy.data.worlds.new("w")
-    world.color = (0.5, 0.6, 0.7)
-    scene.world = world
-    scene.render.engine = "BLENDER_EEVEE_NEXT"
-    scene.render.resolution_x = 640
-    scene.render.resolution_y = 800
     scene.render.filepath = path
     bpy.ops.render.render(write_still=True)
 
@@ -118,8 +120,18 @@ def render(path, rig, frame):
 
 ## CMU's BVH files are in units of 1/0.45 inch.
 CMU_SCALE = 0.0254 / 0.45
-## Target bones whose CMU counterparts are named differently.
-BONE_MAP = {"LeftHandFinger1": "LeftHandIndex1", "RightHandFinger1": "RightHandIndex1"}
+## The MakeHuman game-engine rig (three joints in every finger, for a real
+## grip) and the CMU bone each of its bones follows. Fingers are posed by
+## the grip instead.
+ROOT = "pelvis"
+BONE_MAP = {
+    "pelvis": "Hips", "spine_01": "LowerBack", "spine_02": "Spine", "spine_03": "Spine1",
+    "neck_01": "Neck", "head": "Head",
+    "clavicle_l": "LeftShoulder", "upperarm_l": "LeftArm", "lowerarm_l": "LeftForeArm", "hand_l": "LeftHand",
+    "clavicle_r": "RightShoulder", "upperarm_r": "RightArm", "lowerarm_r": "RightForeArm", "hand_r": "RightHand",
+    "thigh_l": "LeftUpLeg", "calf_l": "LeftLeg", "foot_l": "LeftFoot", "ball_l": "LeftToeBase",
+    "thigh_r": "RightUpLeg", "calf_r": "RightLeg", "foot_r": "RightFoot", "ball_r": "RightToeBase",
+}
 
 
 def sample_bvh(name, step):
@@ -158,17 +170,17 @@ def retarget(rig, mocap, name):
     The target's A-pose rest is first swung onto the source's T-pose
     direction, so arms that hang at rest still follow the capture exactly.
     """
-    bones = [b for b in rig.data.bones if b.name != "Club"]
+    bones = sorted((b for b in rig.data.bones if b.name != "Club"), key=lambda b: len(b.parent_recursive))
     world = rig.matrix_world.to_3x3().normalized()
     rest_arm = {b.name: b.matrix_local.copy() for b in bones}
     convert = {}
     for b in bones:
-        src = BONE_MAP.get(b.name, b.name)
+        src = BONE_MAP.get(b.name)
         rt = (rig.matrix_world @ b.matrix_local).to_3x3().normalized()
-        if src not in mocap["rest"]:
+        if src is None or src not in mocap["rest"]:
             continue
         rs = mocap["rest"][src].to_3x3().normalized()
-        if src in mocap["short"] or b.name == "Hips":
+        if src in mocap["short"] or b.name == ROOT:
             # Too short to have a direction: inherit the parent's correction.
             parent = b.parent
             align = convert[parent.name][1] if parent and parent.name in convert else Matrix.Identity(3)
@@ -176,7 +188,7 @@ def retarget(rig, mocap, name):
             align = rt.col[1].rotation_difference(rs.col[1]).to_matrix()
         convert[b.name] = (rs.inverted() @ align @ rt, align, src)
 
-    hips_ratio = rest_arm["Hips"].translation.z / mocap["hips"]
+    hips_ratio = rest_arm[ROOT].translation.z / mocap["hips"]
     action = bpy.data.actions.new(name)
     keys = {b.name: [] for b in bones}
     hips_keys = []
@@ -205,7 +217,7 @@ def retarget(rig, mocap, name):
             prev[b.name] = q
             keys[b.name].append(q)
         hips = frame["Hips"].translation * hips_ratio
-        hips_rest = rest_arm["Hips"]
+        hips_rest = rest_arm[ROOT]
         hips_keys.append(hips_rest.to_3x3().normalized().inverted() @ (rig.matrix_world.inverted() @ hips - hips_rest.translation))
 
     n = len(mocap["frames"])
@@ -220,9 +232,9 @@ def retarget(rig, mocap, name):
                 co += [f + 1, q[axis]]
             fc.keyframe_points.foreach_set("co", co)
             fc.update()
-    path = 'pose.bones["Hips"].location'
+    path = 'pose.bones["%s"].location' % ROOT
     for axis in range(3):
-        fc = action.fcurves.new(path, index=axis, action_group="Hips")
+        fc = action.fcurves.new(path, index=axis, action_group=ROOT)
         fc.keyframe_points.add(n)
         co = []
         for f, v in enumerate(hips_keys):
@@ -236,18 +248,6 @@ def retarget(rig, mocap, name):
     rig.animation_data.action = None
     rig.animation_data.action = action
     return action
-
-
-def hands_track(rig, action):
-    """Midpoint of the wrists, in world space, for every frame of action."""
-    rig.animation_data.action = action
-    scene = bpy.context.scene
-    track = []
-    for f in range(1, int(action.frame_range[1]) + 1):
-        scene.frame_set(f)
-        pb = rig.pose.bones
-        track.append((rig.matrix_world @ ((pb["LeftHand"].head + pb["RightHand"].head) / 2)).copy())
-    return track
 
 
 # --- The club ------------------------------------------------------------------
@@ -277,7 +277,7 @@ def add_club_bone(rig):
 
 
 def _grip(pb):
-    return (pb["LeftHand"].head + pb["RightHand"].head) / 2.0
+    return (pb["hand_l"].head + pb["hand_r"].head) / 2.0
 
 
 def _signed_angle(a, b, n):
@@ -300,7 +300,7 @@ def club_track(rig, action, stroke):
     samples = []
     for f in range(1, n_frames + 1):
         scene.frame_set(f)
-        centre = (pb["LeftArm"].head + pb["RightArm"].head) / 2.0
+        centre = (pb["upperarm_l"].head + pb["upperarm_r"].head) / 2.0
         samples.append((_grip(pb).copy(), centre.copy()))
 
     grip0, centre0 = samples[0]
@@ -396,7 +396,7 @@ def club_track(rig, action, stroke):
         fc.update()
     rig.animation_data.action = None
     rig.animation_data.action = action
-    grip_hands(rig, action, [k.to_3x3() for k in keys])
+    grip_club(rig, action, keys)
     fps = scene.render.fps
     marks = {"start": start / fps, "top": top / fps, "impact": impact / fps, "finish": finish / fps,
              "end": (n_frames - 1) / fps, "club_length": club_length, "lie": stroke["lie"],
@@ -406,58 +406,158 @@ def club_track(rig, action, stroke):
     return marks
 
 
-## How far the fingers and thumbs close round the grip.
-FINGER_CURL = math.radians(75.0)
-THUMB_CURL = math.radians(30.0)
+# --- The grip -------------------------------------------------------------------
+#
+# The capture's wrists are noisy and sit side by side, so the hands are put
+# on the club instead: arm IK takes each wrist to its place on the grip (the
+# capture's elbows still choose which way the arms bend), each hand turns
+# with the club, and the fingers wrap round it. Positions are in the club's
+# frame: Y down the shaft from the Club bone, X towards the target at
+# address, Z the swing plane's normal.
+
+## Where each palm meets the shaft, measured down it from the Club bone, and
+## which way the palm faces (left away from the target, right towards it).
+GRIP = {
+    "l": {"contact": -0.03, "palm": -1.0},
+    "r": {"contact": 0.055, "palm": 1.0},
+}
+## The hand runs down the shaft and round it at this angle, wrist to knuckles,
+## and the wrist sits this far back from where the palm holds the shaft, and
+## this far out from the shaft.
+HAND_ACROSS = math.radians(40.0)
+WRIST_BACK = 0.09
+WRIST_OUT = 0.03
+## Finger joint bends (base, middle, tip).
+FINGER_CURL = {"index": (70, 80, 45), "middle": (78, 85, 50), "ring": (82, 88, 50), "pinky": (85, 88, 50)}
+## The thumb lies along the hand towards the fingers (down the shaft),
+## turned this far in towards the palm, its joints bending a little.
+THUMB_IN = 0.35
+## ...but only part of the way from its rest pose, which keeps the mesh clean.
+THUMB_SWING = {"l": 0.55, "r": 0.85}
+THUMB_CURL = (15, 20)
 
 
-def grip_hands(rig, action, club_rots):
-    """Puts the hands on the club. The capture's wrist angles are noisy, so
-    each hand instead turns with the club, from a grip set at address: the
-    hand runs down the shaft, the left palm facing away from the target and
-    the right palm towards it. The fingers close round the grip."""
+def _hand_frame(side):
+    """The hand's direction and palm, in the club's frame."""
+    along = Vector((0.0, math.cos(HAND_ACROSS), math.sin(HAND_ACROSS)))
+    palm = Vector((GRIP[side]["palm"], 0.0, 0.0))
+    return along, palm
+
+
+def _palm_axis(rig, side):
+    """Which axis of the hand bone is the palm (and its sign): the one that
+    faces the thigh in the rest pose, where the arms hang."""
+    rest = rig.data.bones["hand_" + side].matrix_local.to_3x3().normalized()
+    inward = Vector((-1.0, 0.0, 0.0)) if side == "l" else Vector((1.0, 0.0, 0.0))
+    return max(((i, sgn) for i in (0, 2) for sgn in (1.0, -1.0)),
+               key=lambda a: (rest.col[a[0]] * a[1]).dot(inward))
+
+
+def _two_bone_ik(root, target, l1, l2, pole):
+    """Elbow position for an arm from root reaching target, bending towards pole."""
+    to = target - root
+    d = min(max(to.length, abs(l1 - l2) + 1e-4), l1 + l2 - 1e-4)
+    u = to.normalized()
+    a = (l1 * l1 - l2 * l2 + d * d) / (2.0 * d)
+    h = math.sqrt(max(l1 * l1 - a * a, 0.0))
+    p = pole - root
+    p = (p - u * p.dot(u))
+    p = p.normalized() if p.length > 1e-6 else Vector((0.0, 0.0, -1.0))
+    return root + u * a + p * h
+
+
+def _aim(rot, direction):
+    """rot turned the least amount so its Y axis points along direction."""
+    return rot.col[1].rotation_difference(direction).to_matrix() @ rot
+
+
+def grip_club(rig, action, club):
     scene = bpy.context.scene
     pb = rig.pose.bones
+    bones = rig.data.bones
     fcurves = {(fc.data_path, fc.array_index): fc for fc in action.fcurves}
-    world = rig.matrix_world.to_3x3().normalized()
-    for side, palm in (("Left", Vector((-1.0, 0.0, 0.0))), ("Right", Vector((1.0, 0.0, 0.0)))):
-        hand = rig.data.bones[side + "Hand"]
-        rest = hand.matrix_local.to_3x3().normalized()
-        # Which hand axis is the palm: the one that points across the body in
-        # the rest pose, where the arms hang with palms to the thighs.
-        inward = Vector((-1.0, 0.0, 0.0)) if side == "Left" else Vector((1.0, 0.0, 0.0))
-        axis = max(((i, sgn) for i in (0, 2) for sgn in (1.0, -1.0)),
-                   key=lambda a: (rest.col[a[0]] * a[1]).dot(inward))
-        shaft = club_rots[0].col[1]
-        palm_w = (palm - shaft * palm.dot(shaft)).normalized()
-        y = shaft
-        cols = [None, y, None]
-        cols[axis[0]] = palm_w * axis[1]
-        other = 2 - axis[0]
+
+    def basis(name, parent_rot, rot):
+        b = bones[name]
+        local = (b.parent.matrix_local.inverted() @ b.matrix_local).to_3x3().normalized()
+        return (local.inverted() @ parent_rot.inverted() @ rot).to_quaternion()
+
+    def write(name, i, q):
+        path = 'pose.bones["%s"].rotation_quaternion' % name
+        for k in range(4):
+            fcurves[(path, k)].keyframe_points[i].co[1] = q[k]
+
+    sides = {}
+    for side in ("l", "r"):
+        along, palm = _hand_frame(side)
+        axis, sgn = _palm_axis(rig, side)
+        cols = [None, along, None]
+        cols[axis] = palm * sgn
+        other = 2 - axis
         cols[other] = cols[(other + 1) % 3].cross(cols[(other + 2) % 3]).normalized()
-        want0 = Matrix((cols[0], cols[1], cols[2])).transposed()
-        offset = club_rots[0].inverted() @ want0
-        parent = rig.data.bones[side + "ForeArm"]
-        local = (parent.matrix_local.inverted() @ hand.matrix_local).to_3x3().normalized()
-        path = 'pose.bones["%s"].rotation_quaternion' % (side + "Hand")
-        prev = None
-        for i, club in enumerate(club_rots):
-            scene.frame_set(i + 1)
-            rp = pb[side + "ForeArm"].matrix.to_3x3().normalized()
-            want = world.inverted() @ (world @ club) @ offset
-            q = (local.inverted() @ rp.inverted() @ want).to_quaternion()
-            if prev is not None:
-                q.make_compatible(prev)
-            prev = q
-            for k in range(4):
-                fcurves[(path, k)].keyframe_points[i].co[1] = q[k]
-        for name, angle in ((side + "HandFinger1", FINGER_CURL), (side[0] + "Thumb", THUMB_CURL)):
-            q = Quaternion(Vector((1.0, 0.0, 0.0)), angle)
-            fpath = 'pose.bones["%s"].rotation_quaternion' % name
-            for k in range(4):
-                fc = fcurves.get((fpath, k))
-                if fc:
-                    for kp in fc.keyframe_points:
+        hand = Matrix((cols[0], cols[1], cols[2])).transposed()
+        contact = Vector((0.0, GRIP[side]["contact"], 0.0))
+        wrist = contact - along * WRIST_BACK - palm * WRIST_OUT
+        up, low, hd = bones["upperarm_" + side], bones["lowerarm_" + side], bones["hand_" + side]
+        sides[side] = {
+            "hand": hand, "wrist": wrist,
+            "l1": (low.head_local - up.head_local).length,
+            "l2": (hd.head_local - low.head_local).length,
+            "prev": {},
+        }
+
+    for i, m in enumerate(club):
+        scene.frame_set(i + 1)
+        rot = m.to_3x3().normalized()
+        for side, g in sides.items():
+            clav = pb["clavicle_" + side].matrix.to_3x3().normalized()
+            r_up = pb["upperarm_" + side].matrix.to_3x3().normalized()
+            r_low = pb["lowerarm_" + side].matrix.to_3x3().normalized()
+            shoulder = pb["upperarm_" + side].head.copy()
+            target = m @ g["wrist"]
+            elbow = _two_bone_ik(shoulder, target, g["l1"], g["l2"], pb["lowerarm_" + side].head)
+            new_up = _aim(r_up, (elbow - shoulder).normalized())
+            new_low = _aim(new_up @ r_up.inverted() @ r_low, (target - elbow).normalized())
+            new_hand = rot @ g["hand"]
+            for name, parent_rot, r in (("upperarm_" + side, clav, new_up),
+                                        ("lowerarm_" + side, new_up, new_low),
+                                        ("hand_" + side, new_low, new_hand)):
+                q = basis(name, parent_rot, r)
+                if name in g["prev"]:
+                    q.make_compatible(g["prev"][name])
+                g["prev"][name] = q
+                write(name, i, q)
+
+    # The fingers close round the grip: each joint bends towards the palm.
+    for side in ("l", "r"):
+        axis, sgn = _palm_axis(rig, side)
+        hand_rest = bones["hand_" + side].matrix_local.to_3x3().normalized()
+        palm_rest = hand_rest.col[axis] * sgn
+        # The thumb's base turns to lie along the hand, down the shaft.
+        thumb = bones["thumb_01_" + side]
+        thumb_rest = thumb.matrix_local.to_3x3().normalized()
+        want = (hand_rest.col[1] + palm_rest * THUMB_IN).normalized()
+        full = thumb_rest.col[1].rotation_difference(want)
+        swing = Quaternion().slerp(full, THUMB_SWING[side]).to_matrix()
+        q = (thumb_rest.inverted() @ swing @ thumb_rest).to_quaternion()
+        path = 'pose.bones["%s"].rotation_quaternion' % thumb.name
+        for k in range(4):
+            for kp in fcurves[(path, k)].keyframe_points:
+                kp.co[1] = q[k]
+        chains = [(f, FINGER_CURL[f], 1) for f in FINGER_CURL] + [("thumb", THUMB_CURL, 2)]
+        for finger, curls, first in chains:
+            for joint, angle in enumerate(curls):
+                name = "%s_%02d_%s" % (finger, joint + first, side)
+                if name not in bones:
+                    continue
+                rest = bones[name].matrix_local.to_3x3().normalized()
+                hinge = rest.col[1].cross(palm_rest)
+                if hinge.length < 1e-6:
+                    continue
+                q = Quaternion(rest.inverted() @ hinge.normalized(), math.radians(angle))
+                path = 'pose.bones["%s"].rotation_quaternion' % name
+                for k in range(4):
+                    for kp in fcurves[(path, k)].keyframe_points:
                         kp.co[1] = q[k]
     for fc in action.fcurves:
         fc.update()
@@ -475,9 +575,12 @@ def _smooth(a, b, x):
 
 def add_club_mesh(rig, length):
     """A stand-in club for checking renders in Blender (Godot draws its own)."""
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.008, depth=length, location=(0, length / 2, 0),
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.01, depth=length + 0.1, location=(0, (length - 0.1) / 2, 0),
                                         rotation=(math.pi / 2, 0, 0))
     shaft = bpy.context.object
+    black = bpy.data.materials.new("grip")
+    black.diffuse_color = (0.03, 0.03, 0.03, 1.0)
+    shaft.data.materials.append(black)
     bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.04, length, 0))
     head = bpy.context.object
     head.scale = (0.08, 0.02, 0.05)
