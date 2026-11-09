@@ -10,7 +10,8 @@ env:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Pinned to match the release build (see release.yml).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
